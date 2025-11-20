@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QFrame, QListWidget, QListWidgetItem, QGridLayout, QGroupBox, QInputDialog
 )
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QIntValidator
 from ape import accounts, project
 from mock_blockchain import MockLandRegistry, MockAccount, MockMarketplace
 from ipfs_utils import upload_file_to_ipfs, upload_json_to_ipfs
@@ -20,6 +20,8 @@ if not USE_MOCK_DATA:
 # WIDGET TÙY CHỈNH CHO MỖI MỤC TRONG DANH SÁCH ĐẤT
 # =============================================================================
 class LandListItemWidget(QWidget):
+    sell_requested = Signal(int) #Token ID
+
     def __init__(self, land_id, land_data, parent=None):
         super().__init__(parent)
         self.land_id = land_id
@@ -56,8 +58,16 @@ class LandListItemWidget(QWidget):
         # Nút "Xem"
         self.view_button = QPushButton("Xem")
         self.view_button.clicked.connect(self.show_details)
-        main_layout.addWidget(self.view_button, alignment=Qt.AlignCenter)
         
+        # Nút "Bán"
+        self.sell_button = QPushButton("Bán")
+        self.sell_button.setStyleSheet("background-color: #4CAF50; color: while;")
+        self.sell_button.clicked.connect(lambda: self.sell_requested.emit(self.land_id))
+        
+        button_layout = QVBoxLayout()
+        button_layout.addWidget(self.sell_button)
+        button_layout.addWidget(self.view_button)
+        main_layout.addLayout(button_layout)
     def show_details(self):
         # Tạm thời chỉ hiển thị một hộp thoại thông báo
         # Sau này có thể thay bằng một cửa sổ chi tiết phức tạp hơn
@@ -76,12 +86,12 @@ class LandListItemWidget(QWidget):
 # TAB CỦA USER: ĐẤT CỦA TÔI (MY ACCOUNT)
 # =============================================================================
 class UserMyAccountTab(QWidget):
-    def __init__(self, user_account, land_registry_contract, land_nft_contract):
+    def __init__(self, user_account, land_registry_contract, land_nft_contract, marketplace_contract):
         super().__init__()
         self.user_account = user_account
         self.land_registry_contract = land_registry_contract
         self.land_nft_contract = land_nft_contract # Có thể cần sau này
-
+        self.marketplace_contract = marketplace_contract
         layout = QVBoxLayout(self)
 
         title = QLabel("Tài sản Bất động sản của bạn")
@@ -119,6 +129,7 @@ class UserMyAccountTab(QWidget):
                     # Tạo widget tùy chỉnh
                     item_widget = LandListItemWidget(land_id, land_data)
                     
+                    item_widget.sell_requested.connect(self.handle_sell_request)
                     # Tạo một mục trong QListWidget
                     list_item = QListWidgetItem(self.land_list_widget)
                     # Đặt kích thước cho mục để vừa với widget tùy chỉnh
@@ -130,6 +141,111 @@ class UserMyAccountTab(QWidget):
                     self.land_list_widget.setItemWidget(list_item, item_widget)
         except Exception as e:
             QMessageBox.critical(self, "Lỗi Blockchain", f"Không thể tải dữ liệu tài sản của bạn: {e}")
+    def handle_sell_request(self, token_id):
+        """Hàm xử lý đầy đủ luồng đăng bán, tự động lấy CCCD."""
+        print(f"Bắt đầu quy trình bán cho token #{token_id}")
+        
+        try:
+            # === BƯỚC 1: KIỂM TRA PHÊ DUYỆT (APPROVAL) ===
+            print(" -> Bước 1: Kiểm tra quyền (approval)...")
+            is_approved = self.land_nft_contract.isApprovedForAll(
+                self.user_account.address,
+                self.marketplace_contract.address
+            )
+            
+            if not is_approved:
+                reply = QMessageBox.question(
+                    self,
+                    "Yêu cầu Phê duyệt",
+                    "Bạn cần cấp quyền cho Sàn giao dịch để quản lý NFT của bạn trước khi có thể đăng bán. "
+                    "Bạn có muốn tiếp tục không?",
+                    QMessageBox.Yes | QMessageBox.No
+                )
+                if reply == QMessageBox.No:
+                    return # Người dùng từ chối
+                
+                approval_receipt = self.land_nft_contract.setApprovalForAll(
+                    self.marketplace_contract.address, True, sender=self.user_account
+                )
+                QMessageBox.information(self, "Phê duyệt Thành công", f"Đã cấp quyền thành công!\nTx: {getattr(approval_receipt, 'txn_hash', 'N/A')}\n\nBây giờ bạn có thể nhấn 'Bán' lại.")
+                return # Dừng lại để người dùng nhấn bán lại, đảm bảo luồng rõ ràng
+
+            # === BƯỚC 2: CHỈ HỎI GIÁ BÁN ===
+            print(" -> Bước 2: Mở dialog để lấy giá bán...")
+            dialog = SellDialog(token_id, self)
+            if dialog.exec(): # Trả về True nếu người dùng nhấn OK
+                price = dialog.get_price()
+                
+                if price is None:
+                    QMessageBox.warning(self, "Thông tin không hợp lệ", "Vui lòng nhập giá bán hợp lệ.")
+                    return
+                
+                # === BƯỚC 2.5: TỰ ĐỘNG LẤY CCCD TỪ LANDREGISTRY ===
+                print(" -> Bước 2.5: Tự động lấy CCCD từ LandRegistry...")
+                # Thay đổi con trỏ chuột để báo hiệu đang tải
+                self.setCursor(Qt.WaitCursor)
+                land_parcel = self.land_registry_contract.get_land(token_id)
+                self.unsetCursor() # Trả lại con trỏ chuột
+                
+                seller_cccd = land_parcel['owner_cccd']
+                
+                if not seller_cccd:
+                    QMessageBox.critical(self, "Lỗi Dữ liệu", "Không tìm thấy thông tin CCCD cho mảnh đất này trong Registry.")
+                    return
+
+                # === BƯỚC 3: GỬI GIAO DỊCH CREATE_LISTING ===
+                print(f" -> Bước 3: Gửi giao dịch create_listing với CCCD tự động: {seller_cccd}")
+                listing_fee = self.marketplace_contract.listing_fee()
+                
+                receipt = self.marketplace_contract.create_listing(
+                    token_id,
+                    seller_cccd, # Dùng CCCD vừa lấy được từ Registry
+                    price,
+                    sender=self.user_account,
+                    value=listing_fee
+                )
+                
+                QMessageBox.information(self, "Thành công", f"Đã đăng bán bất động sản #{token_id} thành công!\nTx: {getattr(receipt, 'txn_hash', 'N/A')}")
+                # Làm mới danh sách để cập nhật trạng thái (ví dụ: hiển thị "Đang bán")
+                self.populate_my_lands() 
+            else:
+                print(" -> Người dùng đã hủy đăng bán.")
+
+        except Exception as e:
+            self.unsetCursor() # Đảm bảo con trỏ chuột được trả lại nếu có lỗi
+            QMessageBox.critical(self, "Lỗi", f"Một lỗi đã xảy ra: {e}")
+
+class SellDialog(QDialog):
+    def __init__(self, token_id, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Đăng bán Bất động sản #{token_id}")
+        
+        layout = QVBoxLayout(self)
+        form_layout = QFormLayout()
+
+        self.price_input = QLineEdit()
+        self.price_input.setPlaceholderText("Nhập giá bán bằng số (đơn vị Wei)")
+        # Chỉ cho phép nhập số nguyên không âm
+        self.price_input.setValidator(QIntValidator(0, 10**24)) 
+
+        form_layout.addRow("<b>Giá bán (Wei) (*):</b>", self.price_input)
+        layout.addLayout(form_layout)
+
+        # Nút OK và Cancel
+        self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.button_box.accepted.connect(self.accept)
+        self.button_box.rejected.connect(self.reject)
+        layout.addWidget(self.button_box)
+
+    def get_price(self):
+        """Chỉ trả về giá trị giá bán đã được nhập."""
+        price_str = self.price_input.text().strip()
+        if price_str:
+            try:
+                return int(price_str)
+            except ValueError:
+                return None
+        return None
 
 
 # =============================================================================
@@ -419,32 +535,25 @@ class AdminSystemConfigTab(QWidget):
 
         # === Khu vực Quản lý Phí ===
         fees_group = QGroupBox("Quản lý Phí Giao dịch")
-        fees_layout = QGridLayout(fees_group)
+        # Sử dụng QFormLayout để căn chỉnh đẹp hơn
+        fees_layout = QFormLayout(fees_group)
 
         # --- Dòng Phí Đăng tin (Listing Fee) ---
-        fees_layout.addWidget(QLabel("<b>Phí Đăng tin (Listing Fee):</b>"), 0, 0)
-        
         self.listing_fee_label = QLabel("<đang tải...>")
         self.listing_fee_label.setStyleSheet("font-style: italic;")
-        fees_layout.addWidget(self.listing_fee_label, 0, 1)
-
-        edit_listing_fee_button = QPushButton("Chỉnh sửa")
-        edit_listing_fee_button.clicked.connect(self.edit_fees)
-        fees_layout.addWidget(edit_listing_fee_button, 0, 2)
+        fees_layout.addRow("<b>Phí Đăng tin (Listing Fee):</b>", self.listing_fee_label)
 
         # --- Dòng Phí Hủy (Cancel Penalty) ---
-        fees_layout.addWidget(QLabel("<b>Phí Phạt Hủy (Cancel Penalty):</b>"), 1, 0)
-
         self.cancel_penalty_label = QLabel("<đang tải...>")
         self.cancel_penalty_label.setStyleSheet("font-style: italic;")
-        fees_layout.addWidget(self.cancel_penalty_label, 1, 1)
+        fees_layout.addRow("<b>Phí Phạt Hủy (Cancel Penalty):</b>", self.cancel_penalty_label)
 
-        edit_cancel_fee_button = QPushButton("Chỉnh sửa")
-        edit_cancel_fee_button.clicked.connect(self.edit_fees)
-        fees_layout.addWidget(edit_cancel_fee_button, 1, 2)
+        # --- Nút Chỉnh sửa duy nhất ---
+        self.edit_fees_button = QPushButton("Chỉnh sửa Phí")
+        self.edit_fees_button.clicked.connect(self.edit_fees)
         
-        # Căn chỉnh cho cột giá trị và nút
-        fees_layout.setColumnStretch(1, 1) # Cho cột giá trị giãn ra
+        # Thêm nút vào một hàng riêng để nó nằm ở dưới
+        fees_layout.addRow("", self.edit_fees_button)
 
         main_layout.addWidget(fees_group)
         
@@ -457,9 +566,11 @@ class AdminSystemConfigTab(QWidget):
             listing_fee = self.marketplace_contract.listing_fee()
             cancel_penalty = self.marketplace_contract.cancel_penalty()
             
-            # Hiển thị giá trị (đơn vị là Wei)
+            # Hiển thị giá trị (đơn vị là Wei), có thể thêm định dạng cho dễ đọc
+            # Ví dụ: f"{listing_fee / 10**18:.4f} ETH ({listing_fee} Wei)"
             self.listing_fee_label.setText(f"{listing_fee} Wei")
             self.cancel_penalty_label.setText(f"{cancel_penalty} Wei")
+            
             self.listing_fee_label.setStyleSheet("font-style: normal; font-weight: bold;")
             self.cancel_penalty_label.setStyleSheet("font-style: normal; font-weight: bold;")
 
@@ -473,31 +584,35 @@ class AdminSystemConfigTab(QWidget):
         """
         Mở một hộp thoại để cho phép Admin nhập cả hai giá trị phí mới.
         """
-        # Lấy giá trị hiện tại để hiển thị trong hộp thoại
-        current_listing_fee = self.marketplace_contract.listing_fee()
-        current_cancel_penalty = self.marketplace_contract.cancel_penalty()
+        # Lấy giá trị hiện tại để hiển thị làm giá trị mặc định trong hộp thoại
+        try:
+            current_listing_fee = self.marketplace_contract.listing_fee()
+            current_cancel_penalty = self.marketplace_contract.cancel_penalty()
+        except Exception as e:
+            QMessageBox.critical(self, "Lỗi", f"Không thể lấy giá trị phí hiện tại: {e}")
+            return
 
         # Mở hộp thoại cho Phí Đăng tin
         new_listing_fee_str, ok1 = QInputDialog.getText(
             self, 
-            "Chỉnh sửa Phí Đăng tin", 
+            "Bước 1/2: Chỉnh sửa Phí Đăng tin", 
             "Nhập giá trị Phí Đăng tin mới (đơn vị Wei):",
             QLineEdit.Normal,
             str(current_listing_fee)
         )
         
-        # Nếu người dùng nhấn OK, tiếp tục hỏi Phí Hủy
-        if ok1 and new_listing_fee_str:
+        # Nếu người dùng nhấn OK và có nhập liệu, tiếp tục hỏi Phí Hủy
+        if ok1 and new_listing_fee_str is not None:
             new_cancel_penalty_str, ok2 = QInputDialog.getText(
                 self,
-                "Chỉnh sửa Phí Phạt Hủy",
+                "Bước 2/2: Chỉnh sửa Phí Phạt Hủy",
                 "Nhập giá trị Phí Phạt Hủy mới (đơn vị Wei):",
                 QLineEdit.Normal,
                 str(current_cancel_penalty)
             )
 
             # Nếu người dùng nhấn OK ở cả hai hộp thoại
-            if ok2 and new_cancel_penalty_str:
+            if ok2 and new_cancel_penalty_str is not None:
                 try:
                     # Chuyển đổi sang số nguyên
                     new_listing_fee = int(new_listing_fee_str)
@@ -511,16 +626,16 @@ class AdminSystemConfigTab(QWidget):
                     )
                     
                     tx_hash = getattr(receipt, 'txn_hash', 'N/A')
-                    QMessageBox.information(self, "Thành công", f"Đã cập nhật phí thành công!\nTx: {tx_hash}")
+                    QMessageBox.information(self, "Thành công", f"Đã gửi giao dịch cập nhật phí!\nTx: {tx_hash}")
                     
-                    # Tải lại dữ liệu để hiển thị giá trị mới
+                    # Tải lại dữ liệu để hiển thị giá trị mới sau khi giao dịch thành công
+                    # Trong ứng dụng thực tế, nên chờ xác nhận giao dịch
                     self.load_current_fees()
 
                 except ValueError:
                     QMessageBox.warning(self, "Dữ liệu không hợp lệ", "Vui lòng chỉ nhập số nguyên.")
                 except Exception as e:
-                    QMessageBox.critical(self, "Lỗi Giao dịch", f"Cập nhật phí thất bại: {e}")
-
+                    QMessageBox.critical(self, "Lỗi Giao dịch", f"Cập nhật phí thất bại: {e}")   
 # =============================================================================
 # TAB CÀI ĐẶT CHUNG (LOGOUT)
 # =============================================================================
@@ -720,7 +835,7 @@ class MainWindow(QMainWindow):
     def show_login_ui(self):
         self.login_window = LoginWindow(self)
         self.setCentralWidget(self.login_window)
-        print("Switched back to Login Page")
+        print("Switched backs to Login Page")
 
     def show_admin_ui(self, admin_account):
         self.tabs = QTabWidget()
@@ -742,11 +857,12 @@ class MainWindow(QMainWindow):
     def show_customer_ui(self, user_account):
         self.tabs = QTabWidget()
         land_registry_contract = MockLandRegistry()
+        marketplace_contract = MockMarketplace(user_account)
         land_nft_contract = None
 
 
         self.register_tab = UserRegisterLandTab(user_account, land_registry_contract)
-        self.my_account_tab = UserMyAccountTab(user_account, land_registry_contract, land_nft_contract)
+        self.my_account_tab = UserMyAccountTab(user_account, land_registry_contract, land_nft_contract, marketplace_contract)
         self.settings_tab = SettingsTab(user_account.address, self)
         #self.settings_tab.logout_requested.connect(self.handle_logout)
         

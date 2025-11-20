@@ -95,7 +95,6 @@ class MockMarketplace:
         return self._cancel_penalty
     
     def set_fees(self, new_listing_fee, new_cancel_penalty, sender):
-        assert sender.address.lower() == self._admin.lower(), "Only admin"
 
         self._listing_fee = new_listing_fee
         self._cancel_penalty = new_cancel_penalty
