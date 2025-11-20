@@ -2,7 +2,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QTabWidget, QVBoxLayout, QPushButton,
     QLineEdit, QLabel, QFormLayout, QTableWidget, QTableWidgetItem,
     QHeaderView, QMessageBox, QDialog, QDialogButtonBox, QHBoxLayout, QFileDialog,
-    QFrame, QListWidget, QListWidgetItem
+    QFrame, QListWidget, QListWidgetItem, QGridLayout, QGroupBox, QInputDialog
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
@@ -404,6 +404,122 @@ class LandDetailDialog(QDialog):
             QMessageBox.critical(self, "Lỗi", f"Có lỗi xảy ra khi từ chối hồ sơ: {e}")
             self.reject()
 
+# =============================================================================
+# TAB CỦA ADMIN: CẤU HÌNH HỆ THỐNG
+# =============================================================================
+class AdminSystemConfigTab(QWidget):
+    def __init__(self, admin_account, marketplace_contract, parent=None):
+        super().__init__(parent)
+        self.admin_account = admin_account
+        self.marketplace_contract = marketplace_contract
+
+        # Layout chính của tab
+        main_layout = QVBoxLayout(self)
+        main_layout.setAlignment(Qt.AlignTop)
+
+        # === Khu vực Quản lý Phí ===
+        fees_group = QGroupBox("Quản lý Phí Giao dịch")
+        fees_layout = QGridLayout(fees_group)
+
+        # --- Dòng Phí Đăng tin (Listing Fee) ---
+        fees_layout.addWidget(QLabel("<b>Phí Đăng tin (Listing Fee):</b>"), 0, 0)
+        
+        self.listing_fee_label = QLabel("<đang tải...>")
+        self.listing_fee_label.setStyleSheet("font-style: italic;")
+        fees_layout.addWidget(self.listing_fee_label, 0, 1)
+
+        edit_listing_fee_button = QPushButton("Chỉnh sửa")
+        edit_listing_fee_button.clicked.connect(self.edit_fees)
+        fees_layout.addWidget(edit_listing_fee_button, 0, 2)
+
+        # --- Dòng Phí Hủy (Cancel Penalty) ---
+        fees_layout.addWidget(QLabel("<b>Phí Phạt Hủy (Cancel Penalty):</b>"), 1, 0)
+
+        self.cancel_penalty_label = QLabel("<đang tải...>")
+        self.cancel_penalty_label.setStyleSheet("font-style: italic;")
+        fees_layout.addWidget(self.cancel_penalty_label, 1, 1)
+
+        edit_cancel_fee_button = QPushButton("Chỉnh sửa")
+        edit_cancel_fee_button.clicked.connect(self.edit_fees)
+        fees_layout.addWidget(edit_cancel_fee_button, 1, 2)
+        
+        # Căn chỉnh cho cột giá trị và nút
+        fees_layout.setColumnStretch(1, 1) # Cho cột giá trị giãn ra
+
+        main_layout.addWidget(fees_group)
+        
+        # Tải dữ liệu phí ban đầu
+        self.load_current_fees()
+
+    def load_current_fees(self):
+        """Tải và hiển thị các mức phí hiện tại từ contract."""
+        try:
+            listing_fee = self.marketplace_contract.listing_fee()
+            cancel_penalty = self.marketplace_contract.cancel_penalty()
+            
+            # Hiển thị giá trị (đơn vị là Wei)
+            self.listing_fee_label.setText(f"{listing_fee} Wei")
+            self.cancel_penalty_label.setText(f"{cancel_penalty} Wei")
+            self.listing_fee_label.setStyleSheet("font-style: normal; font-weight: bold;")
+            self.cancel_penalty_label.setStyleSheet("font-style: normal; font-weight: bold;")
+
+        except Exception as e:
+            error_message = f"Lỗi: {e}"
+            self.listing_fee_label.setText(error_message)
+            self.cancel_penalty_label.setText(error_message)
+            QMessageBox.critical(self, "Lỗi Blockchain", f"Không thể tải dữ liệu phí: {e}")
+
+    def edit_fees(self):
+        """
+        Mở một hộp thoại để cho phép Admin nhập cả hai giá trị phí mới.
+        """
+        # Lấy giá trị hiện tại để hiển thị trong hộp thoại
+        current_listing_fee = self.marketplace_contract.listing_fee()
+        current_cancel_penalty = self.marketplace_contract.cancel_penalty()
+
+        # Mở hộp thoại cho Phí Đăng tin
+        new_listing_fee_str, ok1 = QInputDialog.getText(
+            self, 
+            "Chỉnh sửa Phí Đăng tin", 
+            "Nhập giá trị Phí Đăng tin mới (đơn vị Wei):",
+            QLineEdit.Normal,
+            str(current_listing_fee)
+        )
+        
+        # Nếu người dùng nhấn OK, tiếp tục hỏi Phí Hủy
+        if ok1 and new_listing_fee_str:
+            new_cancel_penalty_str, ok2 = QInputDialog.getText(
+                self,
+                "Chỉnh sửa Phí Phạt Hủy",
+                "Nhập giá trị Phí Phạt Hủy mới (đơn vị Wei):",
+                QLineEdit.Normal,
+                str(current_cancel_penalty)
+            )
+
+            # Nếu người dùng nhấn OK ở cả hai hộp thoại
+            if ok2 and new_cancel_penalty_str:
+                try:
+                    # Chuyển đổi sang số nguyên
+                    new_listing_fee = int(new_listing_fee_str)
+                    new_cancel_penalty = int(new_cancel_penalty_str)
+                    
+                    # Gửi giao dịch
+                    receipt = self.marketplace_contract.set_fees(
+                        new_listing_fee,
+                        new_cancel_penalty,
+                        sender=self.admin_account
+                    )
+                    
+                    tx_hash = getattr(receipt, 'txn_hash', 'N/A')
+                    QMessageBox.information(self, "Thành công", f"Đã cập nhật phí thành công!\nTx: {tx_hash}")
+                    
+                    # Tải lại dữ liệu để hiển thị giá trị mới
+                    self.load_current_fees()
+
+                except ValueError:
+                    QMessageBox.warning(self, "Dữ liệu không hợp lệ", "Vui lòng chỉ nhập số nguyên.")
+                except Exception as e:
+                    QMessageBox.critical(self, "Lỗi Giao dịch", f"Cập nhật phí thất bại: {e}")
 
 # =============================================================================
 # TAB CÀI ĐẶT CHUNG (LOGOUT)
@@ -452,6 +568,7 @@ class LandDetailDialog(QDialog):
 #             # Nếu người dùng xác nhận, phát tín hiệu logout_requested
 #             print("Logout signal emitted.")
 #             self.logout_requested.emit()
+
 class SettingsTab(QWidget):
     # Không cần định nghĩa signal nữa
     # logout_requested = Signal()
@@ -607,15 +724,17 @@ class MainWindow(QMainWindow):
 
     def show_admin_ui(self, admin_account):
         self.tabs = QTabWidget()
-        
+        marketplace_contract = MockMarketplace(admin_account)
         # Admin Tabs
         self.land_registry_tab = AdminLandRegistryTab(admin_account)
+        self.config_tab = AdminSystemConfigTab(admin_account, marketplace_contract)
         self.settings_tab = SettingsTab(admin_account.address, self)
         #self.settings_tab.logout_requested.connect(self.handle_logout)
+        
 
         self.tabs.addTab(self.land_registry_tab, "Land Registration")
         self.tabs.addTab(QWidget(), "Transaction")
-        self.tabs.addTab(QWidget(), "System Config")
+        self.tabs.addTab(self.config_tab, "System Config")
         self.tabs.addTab(self.settings_tab, "Setting")
         
         self.setCentralWidget(self.tabs)

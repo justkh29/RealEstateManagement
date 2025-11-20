@@ -81,7 +81,26 @@ class MockMarketplace:
     """Lớp giả mạo cho contract Marketplace."""
     def __init__(self, admin_address):
         self._admin = admin_address
+        self._listing_fee = 10000000000000000
+        self._cancel_penalty = 50000000000000000
 
     def admin(self):
         print("[MOCK] Getting admin address from Marketplace...")
         return self._admin
+    
+    def listing_fee(self):
+        return self._listing_fee
+    
+    def cancel_penalty(self):
+        return self._cancel_penalty
+    
+    def set_fees(self, new_listing_fee, new_cancel_penalty, sender):
+        assert sender.address.lower() == self._admin.lower(), "Only admin"
+
+        self._listing_fee = new_listing_fee
+        self._cancel_penalty = new_cancel_penalty
+
+        print(f"    -> New Listing fee: {self._listing_fee}")
+        print(f"    -> New Cancel penalty: {self._cancel_penalty}")
+
+        return {"txn_hash": f"0xmock_set_fees_tx_hash"}
