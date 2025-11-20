@@ -1,5 +1,5 @@
 # file: mock_blockchain.py
-
+MOCK_USER_ADDRESS = "0x1234567890123456789012345678901234567890"
 class MockAccount:
     """Lớp giả mạo cho tài khoản Ape."""
     def __init__(self, address):
@@ -8,16 +8,29 @@ class MockAccount:
 class MockLandRegistry:
     """Lớp giả mạo cho contract LandRegistry."""
     def __init__(self):
-        self.next_id = 4
+        self.next_id = 8
         self.parcels = {
-            1: {'id': 1, 'land_address': '123 Đường A, Quận 1', 'area': 100, 'owner_cccd': '0123456789', 'status': 0, 'pdf_uri': 'ipfs://pdf1', 'image_uri': 'ipfs://img1'},
-            2: {'id': 2, 'land_address': '456 Đường B, Quận 3', 'area': 150, 'owner_cccd': '0987654321', 'status': 0, 'pdf_uri': 'ipfs://pdf2', 'image_uri': 'ipfs://img2'},
-            3: {'id': 3, 'land_address': '789 Đường C, Quận 5', 'area': 120, 'owner_cccd': '1122334455', 'status': 1, 'pdf_uri': 'ipfs://pdf3', 'image_uri': 'ipfs://img3'}, # Đã duyệt
+            # --- Đất của User A ---
+            1: {'id': 1, 'land_address': '123 Đường A, Quận 1, TP.HCM', 'area': 100, 'owner_cccd': '079012345678', 'status': 1, 'pdf_uri': 'ipfs://QmPDFHash1', 'image_uri': 'ipfs://QmImageHash1'}, # Đang chờ duyệt
+            2: {'id': 2, 'land_address': '456 Đường B, Quận 3, TP.HCM', 'area': 150, 'owner_cccd': '079012345678', 'status': 1, 'pdf_uri': 'ipfs://QmPDFHash2', 'image_uri': 'ipfs://QmImageHash2'}, # Đã duyệt
+            
+            # --- Đất của User B ---
+            3: {'id': 3, 'land_address': '789 Đường C, Quận 5, TP.HCM', 'area': 120, 'owner_cccd': '079087654321', 'status': 1, 'pdf_uri': 'ipfs://QmPDFHash3', 'image_uri': 'ipfs://QmImageHash3'}, # Đang chờ duyệt
+            4: {'id': 4, 'land_address': '101 Đường D, Quận 7, TP.HCM', 'area': 200, 'owner_cccd': '079087654321', 'status': 1, 'pdf_uri': 'ipfs://QmPDFHash4', 'image_uri': 'ipfs://QmImageHash4'}, # Đã duyệt
+            5: {'id': 5, 'land_address': '212 Đường E, Quận Bình Thạnh, TP.HCM', 'area': 80, 'owner_cccd': '079087654321', 'status': 1, 'pdf_uri': 'ipfs://QmPDFHash5', 'image_uri': 'ipfs://QmImageHash5'}, # Đã bị từ chối
+            
+            # --- Thêm đất đang chờ duyệt để danh sách Admin dài hơn ---
+            6: {'id': 6, 'land_address': '333 Đường F, TP. Thủ Đức', 'area': 180, 'owner_cccd': '112233445566', 'status': 1, 'pdf_uri': 'ipfs://QmPDFHash6', 'image_uri': 'ipfs://QmImageHash6'},
+            7: {'id': 7, 'land_address': '444 Đường G, Quận 12, TP.HCM', 'area': 95, 'owner_cccd': '665544332211', 'status': 1, 'pdf_uri': 'ipfs://QmPDFHash7', 'image_uri': 'ipfs://QmImageHash7'},
         }
         self.owners = {
-            1: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", # Địa chỉ ví mẫu
-            2: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-            3: "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+            1: MOCK_USER_ADDRESS,
+            2: MOCK_USER_ADDRESS,
+            3: MOCK_USER_ADDRESS,
+            4: MOCK_USER_ADDRESS,
+            5: MOCK_USER_ADDRESS,
+            6: MOCK_USER_ADDRESS, # Thêm chủ sở hữu cho các mảnh mới
+            7: MOCK_USER_ADDRESS,
         }
 
     def next_land_id(self):
@@ -35,6 +48,16 @@ class MockLandRegistry:
     def get_land_owner(self, land_id):
         print(f"[MOCK] Getting owner for land #{land_id}...")
         return self.owners.get(land_id)
+
+    def get_lands_by_owner(self, owner_address):
+        """Hàm giả mạo để lấy danh sách đất của một người."""
+        print(f"[MOCK] Getting lands for owner {owner_address}...")
+        owned_ids = []
+        for land_id, owner in self.owners.items():
+            if owner.lower() == owner_address.lower():
+                owned_ids.append(land_id)
+        print(f"      -> Found IDs: {owned_ids}")
+        return owned_ids
 
     def approve_land(self, land_id, metadata_uri, sender):
         print(f"[MOCK] Admin {sender.address} approving land #{land_id} with metadata {metadata_uri}...")
