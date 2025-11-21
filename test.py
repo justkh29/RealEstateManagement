@@ -185,7 +185,7 @@ class ListingCardWidget(QFrame):
         
         layout.addWidget(QLabel(f"<b>{land_data.land_address}</b>"))
         layout.addWidget(QLabel(f"Diện tích: {land_data.area} m²"))
-        price_in_eth = listing_data['price'] / 10**18
+        price_in_eth = listing_data.price / 10**18
         layout.addWidget(QLabel(f"<b style='color: #d32f2f; font-size: 16px;'>{price_in_eth:.4f} ETH</b>"))
         
         view_button = QPushButton("Xem Chi tiết & Mua")
@@ -283,7 +283,7 @@ class ListingDetailDialog(QDialog):
             QMessageBox.warning(self, "Thiếu thông tin", "Vui lòng nhập số CCCD của bạn.")
             return
 
-        price_wei = self.listing_data['price']
+        price_wei = self.listing_data.price
         
         reply = QMessageBox.question(
             self, "Xác nhận Mua",
@@ -296,7 +296,7 @@ class ListingDetailDialog(QDialog):
 
         try:
             receipt = self.marketplace_contract.initiate_transaction(
-                self.listing_data['listing_id'],
+                self.listing_data.listing_id,
                 buyer_cccd,
                 sender=self.user_account,
                 value=price_wei
@@ -362,7 +362,7 @@ class MarketplaceTab(QWidget):
                     
                     if land_data and land_data.id != 0:
                         # Truyền các đối tượng dataclass đã được parse
-                        card = ListingCardWidget(listing_data.listing_id, listing_data, land_data, seller_address)
+                        card = ListingCardWidget(listing_data, land_data, seller_address)
                         card.view_details_requested.connect(self.handle_view_details)
                         self.grid_layout.addWidget(card, row, col)
                     col += 1
@@ -436,7 +436,7 @@ class MyAccountTab(QWidget):
                 
                 if land_data and land_data.status == 1:
                     # Truyền đối tượng dataclass vào widget
-                    item_widget = LandListItemWidget(land_id, land_data)
+                    item_widget = LandListItemWidget(land_data)
                     
                     item_widget.sell_requested.connect(self.handle_sell_request)
                     # Tạo một mục trong QListWidget
@@ -614,6 +614,16 @@ class RegisterLandTab(QWidget): # Tạo một class riêng cho tab này
         layout.addWidget(self.register_button, alignment=Qt.AlignCenter)
 
         layout.addStretch(1) 
+
+    def _clear_form(self):
+        """Hàm trợ giúp để xóa trắng tất cả các ô input."""
+        self.land_address_input.clear()
+        self.area_input.clear()
+        self.cccd_input.clear()
+        self.pdf_uri_input.clear()
+        self.image_uri_input.clear()
+        print("Registration form has been cleared.")
+
     def upload_pdf(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Chọn file PDF", "", "PDF Files (*.pdf)")
         if file_path:
@@ -651,9 +661,9 @@ class RegisterLandTab(QWidget): # Tạo một class riêng cho tab này
                 land_address, area, cccd, pdf_uri, image_uri,
                 sender=self.user_account
             )
-            QMessageBox.information(self, "Thành công", f"Đã gửi hồ sơ đăng ký thành công!\nTx: {receipt.txn_hash}")
+            QMessageBox.information(self, "Thành công", f"Đã gửi hồ sơ đăng ký thành công!\nTx: {getattr(receipt, 'txn_hash', 'N/A')}")
             # Xóa các ô input sau khi thành công
-            self.land_address_input.clear()
+            self._clear_form()
             # ... clear các ô khác
         except Exception as e:
             QMessageBox.critical(self, "Lỗi", f"Gửi hồ sơ thất bại: {e}")
@@ -663,11 +673,11 @@ class RegisterLandTab(QWidget): # Tạo một class riêng cho tab này
 # TAB CỦA ADMIN: DUYỆT ĐĂNG KÝ ĐẤT
 # =============================================================================
 class LandRegistryTab(QWidget):
-    def __init__(self, admin_account):
+    def __init__(self, admin_account, land_registry_contract):
         super().__init__()
         
         self.admin_account = admin_account
-        self.land_registry_contract = MockLandRegistry()
+        self.land_registry_contract = land_registry_contract
         ##self.land_registry_contract = project.LandRegistry.at(LAND_REGISTRY_ADDRESS)
 
         # Main layout
@@ -734,7 +744,7 @@ class LandRegistryTab(QWidget):
         try:
             land_tuple = self.land_registry_contract.land_parcels(land_id)
             land_data = parse_land_parcel_tuple(land_tuple)
-            land_owner = self.land_registry_contract.land_to_owner(land_id)
+            land_owner = self.land_registry_contract.get_land_owner(land_id)
 
             if land_data:
                 dialog = LandDetailDialog(land_id, land_data, land_owner, self.land_registry_contract, self.admin_account, self)
@@ -840,6 +850,111 @@ class LandDetailDialog(QDialog):
             self.reject()
 
 # =============================================================================
+# TAB CỦA ADMIN: DUYỆT GIAO DỊCH
+# =============================================================================
+class AdminTransactionTab(QWidget):
+    def __init__(self, admin_account, marketplace_contract, land_nft_contract, land_registry_contract):
+        super().__init__()
+        self.admin_account = admin_account
+        self.marketplace_contract = marketplace_contract
+        self.land_nft_contract = land_nft_contract
+        self.land_registry_contract = land_registry_contract
+
+        layout = QVBoxLayout(self)
+        title = QLabel("Quản lý Giao dịch Mua bán")
+        title.setStyleSheet("font-size: 18px; font-weight: bold; margin-bottom: 10px;")
+        layout.addWidget(title)
+        
+        self.refresh_button = QPushButton("Làm mới Danh sách")
+        self.refresh_button.clicked.connect(self.populate_pending_transactions)
+        layout.addWidget(self.refresh_button, alignment=Qt.AlignRight)
+
+        self.transactions_table = QTableWidget()
+        self.transactions_table.setColumnCount(7)
+        self.transactions_table.setHorizontalHeaderLabels([
+            "ID Giao dịch", "ID Đất", "Người bán", "Người mua", 
+            "CCCD Người mua", "Giá (ETH)", "Hành động"
+        ])
+        self.transactions_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.transactions_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        layout.addWidget(self.transactions_table)
+        
+        self.populate_pending_transactions()
+
+    def populate_pending_transactions(self):
+        self.transactions_table.setRowCount(0)
+        try:
+            next_tx_id = self.marketplace_contract.next_tx_id
+            pending_txs = []
+            for i in range(1, next_tx_id):
+                tx_tuple = self.marketplace_contract.transactions(i)
+                if tx_tuple and tx_tuple[5] == 0: # status == 0 (Pending)
+                    pending_txs.append(tx_tuple)
+            
+            self.transactions_table.setRowCount(len(pending_txs))
+
+            for row, tx_tuple in enumerate(pending_txs):
+                tx_id = tx_tuple[0]
+                listing_id = tx_tuple[1]
+                buyer_cccd = tx_tuple[2]
+                buyer_address = tx_tuple[3]
+                amount_wei = tx_tuple[4]
+                
+                # Lấy thông tin bổ sung
+                listing_tuple = self.marketplace_contract.listings(listing_id)
+                listing_data = parse_listing_tuple(listing_tuple)
+                
+                token_id = listing_data.token_id
+                seller_address = self.land_nft_contract.ownerOf(token_id)
+                
+                # Điền vào bảng
+                self.transactions_table.setItem(row, 0, QTableWidgetItem(str(tx_id)))
+                self.transactions_table.setItem(row, 1, QTableWidgetItem(str(token_id)))
+                self.transactions_table.setItem(row, 2, QTableWidgetItem(seller_address))
+                self.transactions_table.setItem(row, 3, QTableWidgetItem(buyer_address))
+                self.transactions_table.setItem(row, 4, QTableWidgetItem(buyer_cccd))
+                self.transactions_table.setItem(row, 5, QTableWidgetItem(f"{amount_wei / 10**18:.4f}"))
+                
+                # Tạo các nút hành động
+                approve_button = QPushButton("Duyệt")
+                reject_button = QPushButton("Từ chối")
+                approve_button.setStyleSheet("background-color: #4CAF50; color: white;")
+                reject_button.setStyleSheet("background-color: #f44336; color: white;")
+                
+                approve_button.clicked.connect(lambda checked, tid=tx_id: self.handle_approve(tid))
+                reject_button.clicked.connect(lambda checked, tid=tx_id: self.handle_reject(tid))
+
+                action_widget = QWidget()
+                action_layout = QHBoxLayout(action_widget)
+                action_layout.addWidget(approve_button)
+                action_layout.addWidget(reject_button)
+                action_layout.setContentsMargins(0, 0, 0, 0)
+                self.transactions_table.setCellWidget(row, 6, action_widget)
+
+        except Exception as e:
+            QMessageBox.critical(self, "Lỗi", f"Không thể tải danh sách giao dịch: {e}")
+
+    def handle_approve(self, tx_id):
+        reply = QMessageBox.question(self, "Xác nhận Duyệt", f"Bạn có chắc chắn muốn duyệt giao dịch #{tx_id} không?")
+        if reply == QMessageBox.Yes:
+            try:
+                receipt = self.marketplace_contract.approve_transaction(tx_id, sender=self.admin_account)
+                QMessageBox.information(self, "Thành công", f"Đã duyệt giao dịch #{tx_id}!\nTx: {getattr(receipt, 'txn_hash', 'N/A')}")
+                self.populate_pending_transactions()
+            except Exception as e:
+                QMessageBox.critical(self, "Lỗi", f"Duyệt giao dịch thất bại: {e}")
+
+    def handle_reject(self, tx_id):
+        reason, ok = QInputDialog.getText(self, "Lý do Từ chối", "Nhập lý do từ chối giao dịch:")
+        if ok:
+            try:
+                receipt = self.marketplace_contract.reject_transaction(tx_id, reason, sender=self.admin_account)
+                QMessageBox.information(self, "Thành công", f"Đã từ chối giao dịch #{tx_id}!\nTx: {getattr(receipt, 'txn_hash', 'N/A')}")
+                self.populate_pending_transactions()
+            except Exception as e:
+                QMessageBox.critical(self, "Lỗi", f"Từ chối giao dịch thất bại: {e}")
+
+# =============================================================================
 # TAB CỦA ADMIN: CẤU HÌNH HỆ THỐNG
 # =============================================================================
 class SystemConfigTab(QWidget):
@@ -905,8 +1020,8 @@ class SystemConfigTab(QWidget):
         """
         # Lấy giá trị hiện tại để hiển thị làm giá trị mặc định trong hộp thoại
         try:
-            current_listing_fee = self.marketplace_contract.listing_fee()
-            current_cancel_penalty = self.marketplace_contract.cancel_penalty()
+            current_listing_fee = self.marketplace_contract.listing_fee
+            current_cancel_penalty = self.marketplace_contract.cancel_penalty
         except Exception as e:
             QMessageBox.critical(self, "Lỗi", f"Không thể lấy giá trị phí hiện tại: {e}")
             return
@@ -1153,28 +1268,63 @@ class MainWindow(QMainWindow):
         print("Switched backs to Login Page")
 
     def show_admin_ui(self, admin_account):
-        self.admin_dashboard_page = QTabWidget()
+        # Khởi tạo layout
+        container = self.admin_dashboard_page
+
+        # Xóa các layout cũ nếu có
+        old_layout = container.layout()
+        if old_layout is not None:
+            while old_layout.count():
+                item = old_layout.takeAt(0)
+                widget = item.widget()
+                if widget is not None:
+                    widget.deleteLater()
+            # Xóa layout cũ
+            QWidget().setLayout(old_layout)
+
+        tabs = QTabWidget()
+
+        # Set contract
         marketplace_contract = self.mock_marketplace
+        land_registry_contract = self.mock_registry
+        land_nft_contract = self.mock_nft
+
         # Admin Tabs
-        self.land_registry_tab = LandRegistryTab(admin_account)
+        self.land_registry_tab = LandRegistryTab(admin_account, land_registry_contract)
+        self.transaction_tab = AdminTransactionTab(admin_account, marketplace_contract, land_nft_contract, land_registry_contract)
         self.config_tab = SystemConfigTab(admin_account, marketplace_contract)
         self.settings_tab = SettingsTab(admin_account.address, self)
-        #self.settings_tab.logout_requested.connect(self.handle_logout)
         
 
-        self.admin_dashboard_page.addTab(self.land_registry_tab, "Land Registration")
-        self.admin_dashboard_page.addTab(QWidget(), "Transaction")
-        self.admin_dashboard_page.addTab(self.config_tab, "System Config")
-        self.admin_dashboard_page.addTab(self.settings_tab, "Setting")
+        tabs.addTab(self.land_registry_tab, "Land Registration")
+        tabs.addTab(self.transaction_tab, "Transaction")
+        tabs.addTab(self.config_tab, "System Config")
+        tabs.addTab(self.settings_tab, "Setting")
         
+        container_layout = QVBoxLayout(container)
+        container_layout.addWidget(tabs)
+
         # Thay thế widget giữ chỗ bằng dashboard thật
-        self.central_widget.removeWidget(self.central_widget.widget(1))
-        self.central_widget.insertWidget(1, self.admin_dashboard_page)
-        self.central_widget.setCurrentWidget(self.admin_dashboard_page)
+        self.central_widget.setCurrentWidget(container)
         print("Switched to Admin Dashboard.")
     
     def show_customer_ui(self, user_account):
-        self.user_dashboard_page = QTabWidget()
+        container = self.user_dashboard_page
+
+        # Xóa các layout cũ nếu có
+        old_layout = container.layout()
+        if old_layout is not None:
+            while old_layout.count():
+                item = old_layout.takeAt(0)
+                widget = item.widget()
+                if widget is not None:
+                    widget.deleteLater()
+            # Xóa layout cũ
+            QWidget().setLayout(old_layout)
+
+        tabs = QTabWidget()
+        
+        # Set contract
         land_registry_contract = self.mock_registry
         marketplace_contract = self.mock_marketplace
         land_nft_contract = self.mock_nft
@@ -1184,18 +1334,18 @@ class MainWindow(QMainWindow):
         self.marketplace_tab = MarketplaceTab(user_account, marketplace_contract, land_registry_contract, land_nft_contract)
         self.my_account_tab = MyAccountTab(user_account, land_registry_contract, land_nft_contract, marketplace_contract)
         self.settings_tab = SettingsTab(user_account.address, self)
-        #self.settings_tab.logout_requested.connect(self.handle_logout)
         
         # Customer Tabs
-        self.user_dashboard_page.addTab(QLabel(f"Welcome User: {user_account.address}"), "Sàn Giao Dịch")
-        self.user_dashboard_page.addTab(self.register_tab, "Register Land")
-        self.user_dashboard_page.addTab(self.marketplace_tab, "Marketplace")
-        self.user_dashboard_page.addTab(self.my_account_tab, "My Account")
-        self.user_dashboard_page.addTab(self.settings_tab, "Setting")
+        tabs.addTab(QLabel(f"Welcome User: {user_account.address}"), "Sàn Giao Dịch")
+        tabs.addTab(self.register_tab, "Register Land")
+        tabs.addTab(self.marketplace_tab, "Marketplace")
+        tabs.addTab(self.my_account_tab, "My Account")
+        tabs.addTab(self.settings_tab, "Setting")
 
-        self.central_widget.removeWidget(self.central_widget.widget(2))
-        self.central_widget.insertWidget(2, self.user_dashboard_page)
-        self.central_widget.setCurrentWidget(self.user_dashboard_page)
+        container_layout = QVBoxLayout(container)
+        container_layout.addWidget(tabs)
+
+        self.central_widget.setCurrentWidget(container)
         print("Switched to User Dashboard.")
 
     def handle_logout(self):
@@ -1204,6 +1354,7 @@ class MainWindow(QMainWindow):
         Chuyển giao diện về màn hình đăng nhập.
         """
         print("Handling logout...")
+        self.current_user = None
         # Xóa tài khoản hiện tại (nếu có logic autosign)
         # Trong trường hợp của Ape, việc này không thực sự cần thiết vì
         # đối tượng account chỉ tồn tại trong bộ nhớ.
