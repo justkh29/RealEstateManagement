@@ -1,5 +1,10 @@
 # file: mock_blockchain.py
-MOCK_USER_ADDRESS = "0x1234567890123456789012345678901234567890"
+MOCK_ADMIN_ADDRESS = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+MOCK_USER_A_ADDRESS = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+MOCK_USER_B_ADDRESS = "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"
+MOCK_LAND_NFT_ADDRESS = "0x_LandNFT_Contract_Address_Mock_0000000"
+MOCK_LAND_REGISTRY_ADDRESS = "0x_LandRegistry_Contract_Address_Mock_000"
+MOCK_MARKETPLACE_ADDRESS = "0x_Marketplace_Contract_Address_Mock_00"
 class MockAccount:
     """Lớp giả mạo cho tài khoản Ape."""
     def __init__(self, address):
@@ -8,64 +13,63 @@ class MockAccount:
 class MockLandRegistry:
     """Lớp giả mạo cho contract LandRegistry."""
     def __init__(self):
-        self.next_id = 8
-        self.parcels = {
-            # --- Đất của User A ---
-            1: {'id': 1, 'land_address': '123 Đường A, Quận 1, TP.HCM', 'area': 100, 'owner_cccd': '079012345678', 'status': 1, 'pdf_uri': 'ipfs://QmPDFHash1', 'image_uri': 'ipfs://QmImageHash1'}, # Đang chờ duyệt
-            2: {'id': 2, 'land_address': '456 Đường B, Quận 3, TP.HCM', 'area': 150, 'owner_cccd': '079012345678', 'status': 1, 'pdf_uri': 'ipfs://QmPDFHash2', 'image_uri': 'ipfs://QmImageHash2'}, # Đã duyệt
-            
-            # --- Đất của User B ---
-            3: {'id': 3, 'land_address': '789 Đường C, Quận 5, TP.HCM', 'area': 120, 'owner_cccd': '079087654321', 'status': 1, 'pdf_uri': 'ipfs://QmPDFHash3', 'image_uri': 'ipfs://QmImageHash3'}, # Đang chờ duyệt
-            4: {'id': 4, 'land_address': '101 Đường D, Quận 7, TP.HCM', 'area': 200, 'owner_cccd': '079087654321', 'status': 1, 'pdf_uri': 'ipfs://QmPDFHash4', 'image_uri': 'ipfs://QmImageHash4'}, # Đã duyệt
-            5: {'id': 5, 'land_address': '212 Đường E, Quận Bình Thạnh, TP.HCM', 'area': 80, 'owner_cccd': '079087654321', 'status': 1, 'pdf_uri': 'ipfs://QmPDFHash5', 'image_uri': 'ipfs://QmImageHash5'}, # Đã bị từ chối
-            
-            # --- Thêm đất đang chờ duyệt để danh sách Admin dài hơn ---
-            6: {'id': 6, 'land_address': '333 Đường F, TP. Thủ Đức', 'area': 180, 'owner_cccd': '112233445566', 'status': 1, 'pdf_uri': 'ipfs://QmPDFHash6', 'image_uri': 'ipfs://QmImageHash6'},
-            7: {'id': 7, 'land_address': '444 Đường G, Quận 12, TP.HCM', 'area': 95, 'owner_cccd': '665544332211', 'status': 1, 'pdf_uri': 'ipfs://QmPDFHash7', 'image_uri': 'ipfs://QmImageHash7'},
+        print("!!! A SINGLE MockLandRegistry INSTANCE CREATED !!!")
+        
+        self.next_land_id = 8
+        self.admin = MOCK_ADMIN_ADDRESS
+
+         # --- Internal Data Storage ---
+        self._land_parcels_data = {
+            1: (1, '123 Đường A, Quận 1', 100, '079011111111', 0, 'ipfs://QmPDF1...', 'ipfs://QmImage1...'),
+            2: (2, '456 Đường B, Quận 3', 150, '079011111111', 1, 'ipfs://QmPDF2...', 'ipfs://QmImage2...'),
+            3: (3, '789 Đường C, Quận 5', 120, '079022222222', 0, 'ipfs://QmPDF3...', 'ipfs://QmImage3...'),
+            4: (4, '101 Đường D, Quận 7', 200, '079022222222', 1, 'ipfs://QmPDF4...', 'ipfs://QmImage4...'),
+            5: (5, '212 Đường E, Bình Thạnh', 80, '079022222222', 2, 'ipfs://QmPDF5...', 'ipfs://QmImage5...'),
+            6: (6, '333 Đường F, Thủ Đức', 180, '079033333333', 0, 'ipfs://QmPDF6...', 'ipfs://QmImage6...'),
+            7: (7, '444 Đường G, Quận 12', 95, '079044444444', 0, 'ipfs://QmPDF7...', 'ipfs://QmImage7...'),
         }
-        self.owners = {
-            1: MOCK_USER_ADDRESS,
-            2: MOCK_USER_ADDRESS,
-            3: MOCK_USER_ADDRESS,
-            4: MOCK_USER_ADDRESS,
-            5: MOCK_USER_ADDRESS,
-            6: MOCK_USER_ADDRESS, # Thêm chủ sở hữu cho các mảnh mới
-            7: MOCK_USER_ADDRESS,
+        self._land_to_owner_data = {
+            1: MOCK_USER_A_ADDRESS, 2: MOCK_USER_A_ADDRESS, 3: MOCK_USER_B_ADDRESS,
+            4: MOCK_USER_B_ADDRESS, 5: MOCK_USER_B_ADDRESS, 6: MOCK_USER_A_ADDRESS, 7: MOCK_USER_B_ADDRESS,
+        }
+        self._owner_to_lands_data = {
+            MOCK_USER_A_ADDRESS: [1, 2, 6], MOCK_USER_B_ADDRESS: [3, 4, 5, 7]
+        }
+        self._land_ids_data = {
+            '079011111111': 1, '079022222222': 3, # etc.
         }
 
-    def next_land_id(self):
-        print("[MOCK] Getting next_land_id...")
-        return self.next_id
+    def land_parcels(self, land_id):
+        data = self._land_parcels_data.get(land_id)
+        # Trả về tuple giống hệt struct của Vyper để test
+        return data if data else (0, "", 0, "", 0, "", "")
 
-    def is_land_pending(self, land_id):
-        print(f"[MOCK] Checking if land #{land_id} is pending...")
-        return self.parcels.get(land_id, {}).get('status') == 0
+    def land_to_owner(self, land_id):
+        return self._land_to_owner_data.get(land_id, "0x" + "0"*40)
+    
+    def owner_to_land(self, owner_address):
+        return self._owner_to_lands_data.get(owner_address, [])
+    
+    def land_ids(self, cccd):
+        return self._land_ids_data.get(cccd, 0)
 
     def get_land(self, land_id):
-        print(f"[MOCK] Getting data for land #{land_id}...")
-        return self.parcels.get(land_id)
+        # Hàm tiện ích cho GUI, trả về dict
+        data = self.land_parcels(land_id)
+        return { 'id': data[0], 'land_address': data[1], 'area': data[2], 'owner_cccd': data[3], 'status': data[4], 'pdf_uri': data[5], 'image_uri': data[6] }
 
-    def get_land_owner(self, land_id):
-        print(f"[MOCK] Getting owner for land #{land_id}...")
-        return self.owners.get(land_id)
-
-    def get_lands_by_owner(self, owner_address):
-        """Hàm giả mạo để lấy danh sách đất của một người."""
-        print(f"[MOCK] Getting lands for owner {owner_address}...")
-        owned_ids = []
-        for land_id, owner in self.owners.items():
-            if owner.lower() == owner_address.lower():
-                owned_ids.append(land_id)
-        print(f"      -> Found IDs: {owned_ids}")
-        return owned_ids
+    def get_land_owner(self, land_id): return self.land_to_owner(land_id)
+    def get_lands_by_owner(self, owner_address): return self.owner_to_lands(owner_address)
+    def is_land_pending(self, land_id): return self.land_parcels(land_id)[4] == 0
 
     def approve_land(self, land_id, metadata_uri, sender):
-        print(f"[MOCK] Admin {sender.address} approving land #{land_id} with metadata {metadata_uri}...")
-        if self.parcels[land_id]['status'] == 0:
-            self.parcels[land_id]['status'] = 1
-            print(f"      -> Land #{land_id} status changed to Approved.")
-            return {"txn_hash": "0xmock_approve_tx_hash_" + str(land_id)}
-        raise Exception("Land is not in pending state")
+        assert sender.address == self.admin, "Mock: Not admin"
+        data = list(self._land_parcels_data[land_id])
+        assert data[4] == 0, "Mock: Not pending"
+        data[4] = 1 # Update status
+        self._land_parcels_data[land_id] = tuple(data)
+        # Giả lập việc gọi mint, không cần trả về gì cụ thể
+        return {"txn_hash": f"0xmock_approve_{land_id}"}
 
 
     def reject_land(self, land_id, sender):
@@ -78,28 +82,77 @@ class MockLandRegistry:
 
 
 class MockMarketplace:
-    """Lớp giả mạo cho contract Marketplace."""
     def __init__(self, admin_address):
-        self._admin = admin_address
-        self._listing_fee = 10000000000000000
-        self._cancel_penalty = 50000000000000000
+        print("!!! MOCK: Marketplace instance created !!!")
+        
+        # Public variables
+        self.admin = admin_address
+        self.listing_fee = 10000000000000000
+        self.cancel_penalty = 50000000000000000
+        self.next_listing_id = 3
+        self.next_tx_id = 1
+        self.land_nft = MOCK_LAND_NFT_ADDRESS
+        self.address = MOCK_MARKETPLACE_ADDRESS
+        
+        # Internal data
+        self._listings_data = {
+            1: (1, 2, '079011111111', 10**18, 0, 0), # id, token_id, cccd, price, status, created_at
+            2: (2, 4, '079022222222', 2.5 * 10**18, 0, 0),
+        }
+        
+    # Public HashMap Getters
+    def listings(self, listing_id):
+        data = self._listings_data.get(listing_id)
+        # Trả về dict mô phỏng struct
+        if not data: return {'listing_id': 0}
+        return {'listing_id': data[0], 'token_id': data[1], 'seller_cccd': data[2], 'price': data[3], 'status': data[4], 'created_at': data[5]}
 
-    def admin(self):
-        print("[MOCK] Getting admin address from Marketplace...")
-        return self._admin
+    # Functions
+    def create_listing(self, token_id, seller_cccd, price, sender, value):
+        assert value >= self.listing_fee
+        listing_id = self.next_listing_id
+        self._listings_data[listing_id] = (listing_id, token_id, seller_cccd, price, 0, 0)
+        self.next_listing_id += 1
+        return {"txn_hash": f"0xmock_create_listing_{listing_id}"}
+        
+    def initiate_transaction(self, listing_id, buyer_cccd, sender, value):
+        listing = list(self._listings_data[listing_id])
+        assert listing[4] == 0 and value == listing[3]
+        listing[4] = 1 # InTransaction
+        self._listings_data[listing_id] = tuple(listing)
+        return {"txn_hash": f"0xmock_initiate_tx_{listing_id}"}
+
+
+class MockLandNFT:
+    def __init__(self, registry_mock):
+        print("!!! MOCK: LandNFT instance created !!!")
+        self._registry = registry_mock # Cần để tra cứu owner
+        
+        # Public variables
+        self.name = "Mock Land NFT"
+        self.symbol = "MLND"
+        self.minter = MOCK_LAND_REGISTRY_ADDRESS
+        
+        # Internal data
+        self._approvals = {}
+        self._operator_approvals = {}
+
+    # Public HashMap Getters
+    def owner_of(self, token_id):
+        return self._registry.get_land_owner(token_id)
     
-    def listing_fee(self):
-        return self._listing_fee
-    
-    def cancel_penalty(self):
-        return self._cancel_penalty
-    
-    def set_fees(self, new_listing_fee, new_cancel_penalty, sender):
+    # Functions
+    def isApprovedForAll(self, owner, operator):
+        return self._operator_approvals.get(owner, {}).get(operator, False)
 
-        self._listing_fee = new_listing_fee
-        self._cancel_penalty = new_cancel_penalty
+    def setApprovalForAll(self, operator, approved, sender):
+        owner = sender.address
+        if owner not in self._operator_approvals: self._operator_approvals[owner] = {}
+        self._operator_approvals[owner][operator] = approved
+        return {"txn_hash": "0xmock_approval_tx"}
 
-        print(f"    -> New Listing fee: {self._listing_fee}")
-        print(f"    -> New Cancel penalty: {self._cancel_penalty}")
-
-        return {"txn_hash": f"0xmock_set_fees_tx_hash"}
+    def transferWithCCCD(self, from_, to, token_id, new_cccd, sender):
+        # Logic chuyển quyền sở hữu sẽ được giả lập trong MockLandRegistry
+        # Hàm này chỉ cần xác nhận nó đã được gọi
+        print(f"[MOCK NFT] transferWithCCCD called for token {token_id} to {to}")
+        return {"txn_hash": f"0xmock_transfer_{token_id}"}

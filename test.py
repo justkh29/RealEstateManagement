@@ -1,20 +1,113 @@
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QTabWidget, QVBoxLayout, QPushButton,
-    QLineEdit, QLabel, QFormLayout, QTableWidget, QTableWidgetItem,
+    QLineEdit, QLabel, QFormLayout, QTableWidget, QTableWidgetItem, QScrollArea,
     QHeaderView, QMessageBox, QDialog, QDialogButtonBox, QHBoxLayout, QFileDialog,
-    QFrame, QListWidget, QListWidgetItem, QGridLayout, QGroupBox, QInputDialog
+    QFrame, QListWidget, QListWidgetItem, QGridLayout, QGroupBox, QInputDialog, QStackedWidget
 )
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont, QIntValidator
+from PySide6.QtCore import QObject, QThread, Qt, Signal, QRegularExpression, QUrl, Slot
+from PySide6.QtGui import QFont, QRegularExpressionValidator, QDesktopServices, QPixmap
 from ape import accounts, project
-from mock_blockchain import MockLandRegistry, MockAccount, MockMarketplace
-from ipfs_utils import upload_file_to_ipfs, upload_json_to_ipfs
+from mock_blockchain import (
+    MockAccount, MockLandRegistry, MockLandNFT, MockMarketplace,
+    MOCK_ADMIN_ADDRESS, MOCK_USER_A_ADDRESS, MOCK_USER_B_ADDRESS
+)
+from ipfs_utils import upload_file_to_ipfs, upload_json_to_ipfs, FLASK_BACKEND_URL
+import requests
+
+from dataclasses import dataclass
 
 USE_MOCK_DATA = True
 
 if not USE_MOCK_DATA:
     LAND_REGISTRY_ADDRESS = "0x..." 
     MARKETPLACE_ADDRESS = "0x..."
+# =============================================================================
+# CÁC LỚP DỮ LIỆU (DATA CLASSES)
+# Định nghĩa cấu trúc dữ liệu sạch mà GUI sẽ sử dụng.
+# =============================================================================
+
+@dataclass
+class LandParcelData:
+    """
+    Lớp này đại diện cho dữ liệu của một 'LandParcel' sau khi đã được xử lý.
+    Thứ tự các trường phải khớp chính xác với thứ tự trong struct của Vyper.
+    """
+    id: int
+    land_address: str
+    area: int
+    owner_cccd: str
+    status: int
+    pdf_uri: str
+    image_uri: str
+
+@dataclass
+class ListingData:
+    """
+    Lớp này đại diện cho dữ liệu của một 'Listing' sau khi đã được xử lý.
+    Thứ tự các trường phải khớp chính xác với thứ tự trong struct của Vyper.
+    """
+    listing_id: int
+    token_id: int
+    seller_cccd: str
+    price: int
+    status: int
+    created_at: int
+
+# =============================================================================
+# CÁC HÀM CHUYỂN ĐỔI (PARSERS / ADAPTERS)
+# Chịu trách nhiệm "dịch" dữ liệu thô từ blockchain (Tuple) sang Data Class.
+# =============================================================================
+
+def parse_land_parcel_tuple(data_tuple: tuple) -> LandParcelData:
+    """
+    Chuyển đổi một tuple trả về từ contract.land_parcels() thành một đối tượng LandParcelData.
+    """
+    # Kiểm tra an toàn: nếu tuple không hợp lệ, trả về một đối tượng rỗng
+    if not isinstance(data_tuple, tuple) or len(data_tuple) != 7:
+        print(f"Cảnh báo: Dữ liệu LandParcel không hợp lệ: {data_tuple}")
+        return LandParcelData(id=0, land_address="", area=0, owner_cccd="", status=99, pdf_uri="", image_uri="")
+    
+    # Kỹ thuật "unpacking": `*data_tuple` sẽ tự động điền các phần tử của tuple
+    # vào các tham số của constructor LandParcelData theo đúng thứ tự.
+    return LandParcelData(*data_tuple)
+
+
+def parse_listing_tuple(data_tuple: tuple) -> ListingData:
+    """
+    Chuyển đổi một tuple trả về từ contract.listings() thành một đối tượng ListingData.
+    """
+    if not isinstance(data_tuple, tuple) or len(data_tuple) != 6:
+        print(f"Cảnh báo: Dữ liệu Listing không hợp lệ: {data_tuple}")
+        return ListingData(listing_id=0, token_id=0, seller_cccd="", price=0, status=99, created_at=0)
+    
+    return ListingData(*data_tuple)
+
+# =============================================================================
+# WORKER TẢI ẢNH (GỌI QUA BACKEND FLASK)
+# =============================================================================
+class ImageDownloader(QObject):
+    finished = Signal(QPixmap)
+    error = Signal(str)
+
+    def __init__(self, url, parent=None):
+        super().__init__(parent)
+        self.url = url
+
+    def run(self):
+        try:
+            # URL bây giờ là một endpoint của Flask, vd: http://.../image/Qm...
+            response = requests.get(self.url, timeout=10)
+            response.raise_for_status()
+            
+            pixmap = QPixmap()
+            pixmap.loadFromData(response.content)
+            
+            if pixmap.isNull():
+                self.error.emit(f"Không thể tải dữ liệu ảnh từ URL: {self.url}")
+            else:
+                self.finished.emit(pixmap)
+        except Exception as e:
+            self.error.emit(f"Lỗi khi tải ảnh qua backend: {e}")
 
 # =============================================================================
 # WIDGET TÙY CHỈNH CHO MỖI MỤC TRONG DANH SÁCH ĐẤT
@@ -61,7 +154,7 @@ class LandListItemWidget(QWidget):
         
         # Nút "Bán"
         self.sell_button = QPushButton("Bán")
-        self.sell_button.setStyleSheet("background-color: #4CAF50; color: while;")
+        self.sell_button.setStyleSheet("background-color: #4CAF50; color: white;")
         self.sell_button.clicked.connect(lambda: self.sell_requested.emit(self.land_id))
         
         button_layout = QVBoxLayout()
@@ -83,9 +176,251 @@ class LandListItemWidget(QWidget):
         QMessageBox.information(self, f"Chi tiết Đất #{self.land_id}", detail_text)
 
 # =============================================================================
+# WIDGET THẺ HIỂN THỊ ĐẤT (TÓM TẮT)
+# =============================================================================
+class ListingCardWidget(QFrame):
+    # Dùng signal để báo cho tab cha biết người dùng muốn xem chi tiết
+    view_details_requested = Signal(int, str) # int là listing_id, str là địa chỉ
+
+    def __init__(self, listing_id, listing_data, land_data, seller_address, parent=None):
+        super().__init__(parent)
+        self.listing_id = listing_data.listing_id
+        self.seller_address = seller_address
+
+        self.setFrameShape(QFrame.StyledPanel)
+        self.setFixedWidth(250)
+        layout = QVBoxLayout(self)
+        
+        
+        self.image_label = QLabel(f"[Hình ảnh Đất #{listing_data['token_id']}]")
+        self.image_label.setFixedSize(230, 120)
+        self.image_label.setStyleSheet("background-color: #eee; border: 1px solid #ccc;")
+        self.image_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.image_label)
+        self.load_image(land_data['image_uri'])
+        
+        layout.addWidget(QLabel(f"<b>{land_data['land_address']}</b>"))
+        layout.addWidget(QLabel(f"Diện tích: {land_data['area']} m²"))
+        price_in_eth = listing_data['price'] / 10**18
+        layout.addWidget(QLabel(f"<b style='color: #d32f2f; font-size: 16px;'>{price_in_eth:.4f} ETH</b>"))
+        
+        view_button = QPushButton("Xem Chi tiết & Mua")
+        view_button.clicked.connect(lambda: self.view_details_requested.emit(self.listing_id, self.seller_address))
+        layout.addWidget(view_button)
+
+    def load_image(self, image_ipfs_uri):
+        if not image_ipfs_uri or not image_ipfs_uri.startswith("ipfs://"):
+            self.handle_image_error("URI hình ảnh không hợp lệ.")
+            return
+
+        # === THAY ĐỔI CHÍNH Ở ĐÂY ===
+        # Lấy CID từ URI
+        cid = image_ipfs_uri.replace("ipfs://", "")
+        
+        # Tạo URL để gọi đến backend Flask
+        backend_image_url = f"{FLASK_BACKEND_URL}/image/{cid}"
+        # ============================
+        
+        # Phần code tạo luồng và worker còn lại giữ nguyên
+        self.thread = QThread()
+        self.worker = ImageDownloader(backend_image_url) # Truyền URL của backend vào worker
+        self.worker.moveToThread(self.thread)
+        self.thread.started.connect(self.worker.run)
+        self.worker.finished.connect(self.set_image)
+        self.worker.error.connect(self.handle_image_error)
+        self.worker.finished.connect(self.thread.quit)
+        # ... (các kết nối dọn dẹp khác) ...
+        self.thread.start()
+    
+    def set_image(self, pixmap):
+        """Slot này được gọi khi ảnh đã được tải xong."""
+        # Co dãn ảnh để vừa với QLabel mà không làm méo ảnh
+        scaled_pixmap = pixmap.scaled(self.image_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.image_label.setPixmap(scaled_pixmap)
+
+    def handle_image_error(self, error_message):
+        """Slot này được gọi khi có lỗi xảy ra."""
+        print(f"Lỗi tải ảnh cho listing #{self.listing_id}: {error_message}")
+        self.image_label.setText("[Lỗi tải ảnh]")
+
+# =============================================================================
+# CỬA SỔ CHI TIẾT VÀ MUA BÁN
+# =============================================================================
+class ListingDetailDialog(QDialog):
+    def __init__(self, user_account, listing_id, listing_data, land_data, seller_address, marketplace_contract, parent=None):
+        super().__init__(parent)
+        self.user_account = user_account
+        self.listing_data = listing_data
+        self.marketplace_contract = marketplace_contract
+        
+        self.setWindowTitle(f"Chi tiết Bất động sản #{listing_data['token_id']}")
+        self.setMinimumWidth(500)
+        
+        layout = QVBoxLayout(self)
+        form_layout = QFormLayout()
+
+        price_in_eth = listing_data['price'] / 10**18
+        
+        form_layout.addRow("<b>Địa chỉ:</b>", QLabel(land_data['land_address']))
+        form_layout.addRow("<b>Diện tích:</b>", QLabel(f"{land_data['area']} m²"))
+        form_layout.addRow("<b>Giá bán:</b>", QLabel(f"{price_in_eth:.4f} ETH ({listing_data['price']} Wei)"))
+        
+        seller_label = QLabel(seller_address)
+        seller_label.setWordWrap(True)
+        form_layout.addRow("<b>Người bán:</b>", seller_label)
+
+        pdf_button = QPushButton("Xem Giấy tờ pháp lý (PDF)")
+        pdf_button.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(land_data['pdf_uri'].replace("ipfs://", "http://192.168.0.140:8080/ipfs/"))))
+        form_layout.addRow(pdf_button)
+        
+        layout.addLayout(form_layout)
+        
+        # Ô nhập CCCD người mua
+        self.cccd_input = QLineEdit()
+        self.cccd_input.setPlaceholderText("Nhập số CCCD của bạn để tiếp tục")
+        layout.addWidget(QLabel("<b>CCCD của Người mua (*):</b>"))
+        layout.addWidget(self.cccd_input)
+        
+        # Nút Mua
+        self.buy_button = QPushButton(f"Mua Ngay với giá {price_in_eth:.4f} ETH")
+        self.buy_button.setStyleSheet("background-color: #1976D2; color: white; font-weight: bold; padding: 10px;")
+        if seller_address.lower() == self.user_account.address.lower():
+            self.buy_button.setText("Đây là tài sản của bạn")
+            self.buy_button.setEnabled(False)
+            self.cccd_input.setEnabled(False)
+        else:
+            self.buy_button.setText(f"Mua Ngay với giá {price_in_eth:.4f} ETH")
+            self.buy_button.clicked.connect(self.handle_buy)
+        layout.addWidget(self.buy_button)
+
+    def handle_buy(self):
+        buyer_cccd = self.cccd_input.text().strip()
+        if not buyer_cccd:
+            QMessageBox.warning(self, "Thiếu thông tin", "Vui lòng nhập số CCCD của bạn.")
+            return
+
+        price_wei = self.listing_data['price']
+        
+        reply = QMessageBox.question(
+            self, "Xác nhận Mua",
+            f"Bạn có chắc chắn muốn mua bất động sản này với giá {price_wei} Wei không?\n"
+            "Số tiền sẽ được ký quỹ cho đến khi Admin duyệt giao dịch.",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply == QMessageBox.No:
+            return
+
+        try:
+            receipt = self.marketplace_contract.initiate_transaction(
+                self.listing_data['listing_id'],
+                buyer_cccd,
+                sender=self.user_account,
+                value=price_wei
+            )
+            QMessageBox.information(self, "Thành công", f"Đã gửi yêu cầu mua thành công!\nGiao dịch của bạn đang chờ Admin duyệt.\nTx: {getattr(receipt, 'txn_hash', 'N/A')}")
+            self.accept() # Đóng cửa sổ
+        except Exception as e:
+            QMessageBox.critical(self, "Lỗi Giao dịch", f"Gửi yêu cầu mua thất bại: {e}")
+
+class MarketplaceTab(QWidget):
+    def __init__(self, user_account, marketplace_contract, land_registry_contract, land_nft_contract):
+        super().__init__()
+        self.user_account = user_account
+        self.marketplace_contract = marketplace_contract
+        self.land_registry_contract = land_registry_contract
+        self.land_nft_contract = land_nft_contract
+
+        main_layout = QHBoxLayout(self)
+
+        # Cột Lọc (tạm thời để trống)
+        filter_panel = QFrame()
+        filter_panel.setFrameShape(QFrame.StyledPanel)
+        filter_panel.setFixedWidth(200)
+        filter_layout = QVBoxLayout(filter_panel)
+        filter_layout.addWidget(QLabel("<b>Bộ lọc (sắp có)</b>"))
+        main_layout.addWidget(filter_panel)
+        
+        # Cột Danh sách
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        grid_container = QWidget()
+        self.grid_layout = QGridLayout(grid_container)
+        self.grid_layout.setAlignment(Qt.AlignTop)
+        scroll_area.setWidget(grid_container)
+        main_layout.addWidget(scroll_area)
+
+        self.load_listings()
+
+    def load_listings(self):
+        # Xóa các widget cũ
+        for i in reversed(range(self.grid_layout.count())): 
+            widget = self.grid_layout.itemAt(i).widget()
+            if widget: widget.setParent(None)
+
+        try:
+            # Truy cập `next_listing_id` như một thuộc tính
+            next_id = self.marketplace_contract.next_listing_id
+            
+            row, col = 0, 0
+            for i in range(1, next_id):
+                # Gọi `listings` như một hàm
+                listing_data = self.marketplace_contract.listings(i)
+                
+                # Kiểm tra xem listing có hợp lệ và đang hoạt động không
+                if listing_data and listing_data['listing_id'] != 0 and listing_data['status'] == 0:
+                    
+                    token_id = listing_data['token_id']
+                    
+                    # Gọi `ownerOf` để lấy người bán (hành vi cốt lõi)
+                    seller_address = self.land_nft_contract.ownerOf(token_id)
+                    
+                    # Lọc: không hiển thị đất của chính mình
+                    if seller_address.lower() == self.user_account.address.lower():
+                        continue 
+
+                    # Lấy dữ liệu chi tiết của đất
+                    land_data = self.land_registry_contract.get_land(token_id)
+                    
+                    if not land_data or land_data['id'] == 0:
+                        continue
+
+                    # Tạo thẻ và kết nối signal
+                    card = ListingCardWidget(listing_data['listing_id'], listing_data, land_data, seller_address)
+                    card.view_details_requested.connect(self.handle_view_details)
+                    
+                    self.grid_layout.addWidget(card, row, col)
+                    col += 1
+                    if col >= 3:
+                        col = 0
+                        row += 1
+        except Exception as e:
+            QMessageBox.critical(self, "Lỗi", f"Không thể tải danh sách niêm yết: {e}")
+
+    @Slot(int, str)
+    def handle_view_details(self, listing_id, seller_address):
+        try:
+            listing_data = self.marketplace_contract.listings(listing_id)
+            land_data = self.land_registry_contract.get_land(listing_data['token_id'])
+            
+            dialog = ListingDetailDialog(
+                self.user_account, 
+                listing_id, 
+                listing_data, 
+                land_data, 
+                seller_address, # Truyền vào seller_address đã có
+                self.marketplace_contract, 
+                self
+            )
+            if dialog.exec():
+                # Nếu mua thành công, làm mới marketplace
+                self.load_listings()
+        except Exception as e:
+            QMessageBox.critical(self, "Lỗi", f"Không thể hiển thị chi tiết: {e}")
+
+# =============================================================================
 # TAB CỦA USER: ĐẤT CỦA TÔI (MY ACCOUNT)
 # =============================================================================
-class UserMyAccountTab(QWidget):
+class MyAccountTab(QWidget):
     def __init__(self, user_account, land_registry_contract, land_nft_contract, marketplace_contract):
         super().__init__()
         self.user_account = user_account
@@ -220,22 +555,25 @@ class SellDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(f"Đăng bán Bất động sản #{token_id}")
         
-        layout = QVBoxLayout(self)
-        form_layout = QFormLayout()
+        self.layout = QVBoxLayout(self)
+        self.form_layout = QFormLayout()
 
         self.price_input = QLineEdit()
         self.price_input.setPlaceholderText("Nhập giá bán bằng số (đơn vị Wei)")
-        # Chỉ cho phép nhập số nguyên không âm
-        self.price_input.setValidator(QIntValidator(0, 10**24)) 
+        
+        regex = QRegularExpression("[0-9]+")
+        validator = QRegularExpressionValidator(regex, self)
+        self.price_input.setValidator(validator)
+        # ============================
 
-        form_layout.addRow("<b>Giá bán (Wei) (*):</b>", self.price_input)
-        layout.addLayout(form_layout)
+        self.form_layout.addRow("<b>Giá bán (Wei) (*):</b>", self.price_input)
+        self.layout.addLayout(self.form_layout)
 
         # Nút OK và Cancel
         self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
-        layout.addWidget(self.button_box)
+        self.layout.addWidget(self.button_box)
 
     def get_price(self):
         """Chỉ trả về giá trị giá bán đã được nhập."""
@@ -251,7 +589,7 @@ class SellDialog(QDialog):
 # =============================================================================
 # TAB CỦA USER: ĐĂNG KÝ ĐẤT MỚI
 # =============================================================================
-class UserRegisterLandTab(QWidget): # Tạo một class riêng cho tab này
+class RegisterLandTab(QWidget): # Tạo một class riêng cho tab này
     def __init__(self, user_account, land_registry_contract):
         super().__init__()
         self.user_account = user_account
@@ -299,6 +637,7 @@ class UserRegisterLandTab(QWidget): # Tạo một class riêng cho tab này
         layout.addLayout(form_layout)
         layout.addWidget(self.register_button, alignment=Qt.AlignCenter)
 
+        layout.addStretch(1) 
     def upload_pdf(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Chọn file PDF", "", "PDF Files (*.pdf)")
         if file_path:
@@ -347,7 +686,7 @@ class UserRegisterLandTab(QWidget): # Tạo một class riêng cho tab này
 # =============================================================================
 # TAB CỦA ADMIN: DUYỆT ĐĂNG KÝ ĐẤT
 # =============================================================================
-class AdminLandRegistryTab(QWidget):
+class LandRegistryTab(QWidget):
     def __init__(self, admin_account):
         super().__init__()
         
@@ -523,7 +862,7 @@ class LandDetailDialog(QDialog):
 # =============================================================================
 # TAB CỦA ADMIN: CẤU HÌNH HỆ THỐNG
 # =============================================================================
-class AdminSystemConfigTab(QWidget):
+class SystemConfigTab(QWidget):
     def __init__(self, admin_account, marketplace_contract, parent=None):
         super().__init__(parent)
         self.admin_account = admin_account
@@ -735,58 +1074,87 @@ class LoginWindow(QWidget):
     def __init__(self, main_window):
         super().__init__()
         self.main_window = main_window
-        self.setWindowTitle("Login")
-        self.setGeometry(100, 100, 300, 200)
+        self.setWindowTitle("Đăng nhập Hệ thống")
+        self.setGeometry(100, 100, 350, 220)
 
-        # Main layout (to center the form)
-        main_layout = QVBoxLayout()
+        main_layout = QVBoxLayout(self)
         
-        # Title
-        title = QLabel("Login")
+        title = QLabel("Đăng nhập")
         title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet("font-size: 20px; font-weight: bold;")
         main_layout.addWidget(title)
 
-        # Create form layout
         form_layout = QFormLayout()
 
         self.username_input = QLineEdit()
-        self.address_input = QLineEdit()
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.Password)
 
-        form_layout.addRow("Username:", self.username_input)
-        form_layout.addRow("Account Address:", self.address_input)
-        form_layout.addRow("Password:", self.password_input)
-
-        # Add the form to the main layout
+        # === THAY ĐỔI: Tùy chỉnh form dựa trên chế độ ===
+        if USE_MOCK_DATA:
+            # Ở chế độ mock, chỉ cần username
+            self.username_input.setPlaceholderText("Nhập 'admin', 'user_a', hoặc 'user_b'")
+            form_layout.addRow("Username:", self.username_input)
+            form_layout.addRow("Password:", self.password_input)
+        else:
+            # Ở chế độ thật, cần username (alias) và password
+            self.username_input.setPlaceholderText("Nhập alias tài khoản Ape của bạn")
+            form_layout.addRow("Username (Alias):", self.username_input)
+            form_layout.addRow("Password:", self.password_input)
+        
         main_layout.addLayout(form_layout)
 
-        # Login button
-        self.login_button = QPushButton("Login")
+        self.login_button = QPushButton("Đăng nhập")
         main_layout.addWidget(self.login_button, alignment=Qt.AlignCenter)
-
         self.login_button.clicked.connect(self.handle_login)
-
         self.setLayout(main_layout)
 
-
     def handle_login(self):
-        username = self.username_input.text()
-        password = self.password_input.text()
+        username = self.username_input.text().strip()
         
-        # You can replace this with your actual login logic
-        if username == "mock_admin":
-            admin_address = "0xdeADBEeF00000000000000000000000000000000"
-            mock_admin_account = MockAccount(admin_address)
-            self.main_window.show_admin_ui(mock_admin_account)
-        elif username == "mock_user":
-            user_address = "0x1234567890123456789012345678901234567890"
-            mock_user_account = MockAccount(user_address)
-            self.main_window.show_customer_ui(mock_user_account)
+        if not username:
+            QMessageBox.warning(self, "Thiếu thông tin", "Vui lòng nhập Username.")
+            return
+
+        if USE_MOCK_DATA:
+            # --- Logic đăng nhập giả (đã cập nhật) ---
+            if username == "admin":
+                # Sử dụng địa chỉ nhất quán từ mock_blockchain.py
+                mock_admin_account = MockAccount(MOCK_ADMIN_ADDRESS)
+                self.main_window.show_admin_ui(mock_admin_account)
+            elif username == "user_a":
+                mock_user_account = MockAccount(MOCK_USER_A_ADDRESS)
+                self.main_window.show_customer_ui(mock_user_account)
+            elif username == "user_b":
+                mock_user_account = MockAccount(MOCK_USER_B_ADDRESS)
+                self.main_window.show_customer_ui(mock_user_account)
+            else:
+                QMessageBox.warning(self, "Đăng nhập thất bại", "Username phải là 'admin', 'user_a', hoặc 'user_b'.")
         else:
-            QMessageBox.warning(self, "Đăng nhập thất bại", "Username phải là 'mock_admin' hoặc 'mock_user'.")
-        return
+            # --- Logic đăng nhập thật với Ape ---
+            password = self.password_input.text()
+            if not password:
+                QMessageBox.warning(self, "Thiếu thông tin", "Vui lòng nhập Password.")
+                return
+            
+            try:
+                # 1. Tải và mở khóa tài khoản Ape
+                user_account = accounts.load(username)
+                user_account.set_autosign(True, passphrase=password)
+                print(f"Đăng nhập thành công với tài khoản: {user_account.address}")
+                
+                # 2. Lấy địa chỉ admin từ contract thật
+                marketplace_contract = project.Marketplace.at(MARKETPLACE_ADDRESS)
+                admin_address = marketplace_contract.admin
+                
+                # 3. Kiểm tra vai trò và chuyển giao diện
+                if user_account.address.lower() == admin_address.lower():
+                    self.main_window.show_admin_dashboard(user_account)
+                else:
+                    self.main_window.show_user_dashboard(user_account)
+            
+            except Exception as e:
+                QMessageBox.critical(self, "Lỗi Đăng nhập", f"Tên người dùng hoặc mật khẩu không hợp lệ.\nChi tiết: {e}")
 
     # def handle_login(self):
     #     username = self.username_input.text()
@@ -827,53 +1195,76 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("Real Estate Management System")
         self.setGeometry(100, 100, 600, 400)
-        
         # Initially, only the login window is shown
-        self.login_window = LoginWindow(self)
-        self.setCentralWidget(self.login_window)
+        self.central_widget = QStackedWidget()
+        self.setCentralWidget(self.central_widget)
+
+        # Tạo sẵn các "trang" giao diện
+        self.login_page = LoginWindow(self)
+        self.admin_dashboard_page = QWidget() # Widget giữ chỗ
+        self.user_dashboard_page = QWidget()  # Widget giữ chỗ
+
+        self.central_widget.addWidget(self.login_page)
+        self.central_widget.addWidget(self.admin_dashboard_page)
+        self.central_widget.addWidget(self.user_dashboard_page)
+        
+        self.current_user = None
+        self.mock_registry = MockLandRegistry()
+        self.mock_nft = MockLandNFT(self.mock_registry)
+        self.mock_marketplace = MockMarketplace(MOCK_ADMIN_ADDRESS)
+        # Bắt đầu ở trang đăng nhập
+        self.show_login_ui()
     
     def show_login_ui(self):
-        self.login_window = LoginWindow(self)
-        self.setCentralWidget(self.login_window)
+        self.central_widget.setCurrentWidget(self.login_page)
         print("Switched backs to Login Page")
 
     def show_admin_ui(self, admin_account):
-        self.tabs = QTabWidget()
-        marketplace_contract = MockMarketplace(admin_account)
+        self.admin_dashboard_page = QTabWidget()
+        marketplace_contract = self.mock_marketplace
         # Admin Tabs
-        self.land_registry_tab = AdminLandRegistryTab(admin_account)
-        self.config_tab = AdminSystemConfigTab(admin_account, marketplace_contract)
+        self.land_registry_tab = LandRegistryTab(admin_account)
+        self.config_tab = SystemConfigTab(admin_account, marketplace_contract)
         self.settings_tab = SettingsTab(admin_account.address, self)
         #self.settings_tab.logout_requested.connect(self.handle_logout)
         
 
-        self.tabs.addTab(self.land_registry_tab, "Land Registration")
-        self.tabs.addTab(QWidget(), "Transaction")
-        self.tabs.addTab(self.config_tab, "System Config")
-        self.tabs.addTab(self.settings_tab, "Setting")
+        self.admin_dashboard_page.addTab(self.land_registry_tab, "Land Registration")
+        self.admin_dashboard_page.addTab(QWidget(), "Transaction")
+        self.admin_dashboard_page.addTab(self.config_tab, "System Config")
+        self.admin_dashboard_page.addTab(self.settings_tab, "Setting")
         
-        self.setCentralWidget(self.tabs)
+        # Thay thế widget giữ chỗ bằng dashboard thật
+        self.central_widget.removeWidget(self.central_widget.widget(1))
+        self.central_widget.insertWidget(1, self.admin_dashboard_page)
+        self.central_widget.setCurrentWidget(self.admin_dashboard_page)
+        print("Switched to Admin Dashboard.")
     
     def show_customer_ui(self, user_account):
-        self.tabs = QTabWidget()
-        land_registry_contract = MockLandRegistry()
-        marketplace_contract = MockMarketplace(user_account)
-        land_nft_contract = None
+        self.user_dashboard_page = QTabWidget()
+        land_registry_contract = self.mock_registry
+        marketplace_contract = self.mock_marketplace
+        land_nft_contract = self.mock_nft
 
 
-        self.register_tab = UserRegisterLandTab(user_account, land_registry_contract)
-        self.my_account_tab = UserMyAccountTab(user_account, land_registry_contract, land_nft_contract, marketplace_contract)
+        self.register_tab = RegisterLandTab(user_account, land_registry_contract)
+        self.marketplace_tab = MarketplaceTab(user_account, marketplace_contract, land_registry_contract, land_nft_contract)
+        self.my_account_tab = MyAccountTab(user_account, land_registry_contract, land_nft_contract, marketplace_contract)
         self.settings_tab = SettingsTab(user_account.address, self)
         #self.settings_tab.logout_requested.connect(self.handle_logout)
         
         # Customer Tabs
-        self.tabs.addTab(QLabel(f"Welcome User: {user_account.address}"), "Sàn Giao Dịch")
-        self.tabs.addTab(self.register_tab, "Register Land")
-        self.tabs.addTab(QWidget(), "Marketplace")
-        self.tabs.addTab(self.my_account_tab, "My Account")
-        self.tabs.addTab(self.settings_tab, "Setting")
+        self.user_dashboard_page.addTab(QLabel(f"Welcome User: {user_account.address}"), "Sàn Giao Dịch")
+        self.user_dashboard_page.addTab(self.register_tab, "Register Land")
+        self.user_dashboard_page.addTab(self.marketplace_tab, "Marketplace")
+        self.user_dashboard_page.addTab(self.my_account_tab, "My Account")
+        self.user_dashboard_page.addTab(self.settings_tab, "Setting")
 
-        self.setCentralWidget(self.tabs)
+        self.central_widget.removeWidget(self.central_widget.widget(2))
+        self.central_widget.insertWidget(2, self.user_dashboard_page)
+        self.central_widget.setCurrentWidget(self.user_dashboard_page)
+        print("Switched to User Dashboard.")
+
     def handle_logout(self):
         """
         Hàm xử lý khi nhận được tín hiệu logout.
