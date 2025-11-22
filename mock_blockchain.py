@@ -28,7 +28,7 @@ class MockLandRegistry:
         
         # Lưu trữ dữ liệu dưới dạng tuple, giống hệt struct
         self._land_parcels_data = { # id, address, area, cccd, status, pdf, image
-            1: (1, '123 Đường A, Quận 1', 100, '079011111111', 0, 'ipfs://QmPDF1...', 'ipfs://QmImage1...'),
+            1: (1, '123 Đường A, Quận 1', 100, '079011111111', 1, 'ipfs://QmPDF1...', 'ipfs://QmImage1...'),
             2: (2, '456 Đường B, Quận 3', 150, '079011111111', 1, 'ipfs://QmPDF2...', 'ipfs://QmImage2...'),
             3: (3, '789 Đường C, Quận 5', 120, '079022222222', 0, 'ipfs://QmPDF3...', 'ipfs://QmImage3...'),
             4: (4, '101 Đường D, Quận 7', 200, '079022222222', 1, 'ipfs://QmPDF4...', 'ipfs://QmTD1Tga9tqGJBzk16U7CN5noumnbJTHgkWvn9EpkUfAe4'),

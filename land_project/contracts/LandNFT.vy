@@ -28,7 +28,6 @@ event CCCDUpdated:
 struct LandData:
     token_id: uint256
     owner_cccd: String[20]
-    metadata_uri: String[128]
 
 # ===================== STATE VARIABLES =====================
 
@@ -55,6 +54,21 @@ def __init__(_name: String[50], _symbol: String[10], _minter_address: address):
     self.minter = _minter_address
 
 # ===================== INTERNAL =====================
+
+@internal
+def _burn(token_id: uint256):
+    owner: address = self.owner_of[token_id]
+    assert owner != empty(address), "Token does not exist"
+    
+    # Xóa hết dữ liệu liên quan
+    self.owner_of[token_id] = empty(address)
+    self.balance_of[owner] -= 1
+    self.token_uri[token_id] = ""
+    self.land_data[token_id] = empty(LandData)
+    self.token_approvals[token_id] = empty(address)
+    
+    log Transfer(owner, empty(address), token_id)
+
 
 @internal
 def _is_approved_or_owner(spender: address, token_id: uint256) -> bool:
@@ -101,11 +115,16 @@ def mint(to: address, token_id: uint256, owner_cccd: String[20], metadata_uri: S
     self.land_data[token_id] = LandData(
         token_id=token_id,
         owner_cccd=owner_cccd,
-        metadata_uri=metadata_uri
     )
     log Transfer(_from=empty(address), _to=to, _tokenId=token_id)
 
     return True
+
+@external
+def burn(token_id: uint256):
+    # Chỉ chủ sở hữu hoặc một admin được phép đốt
+    assert self._is_approved_or_owner(msg.sender, token_id), "Not owner or approved"
+    self._burn(token_id)
 
 @external
 def transferWithCCCD(from_: address, to: address, token_id: uint256, new_cccd: String[20]):
@@ -117,9 +136,7 @@ def transferWithCCCD(from_: address, to: address, token_id: uint256, new_cccd: S
     self.token_approvals[token_id] = empty(address)
 
     # Update balances and owner
-    self.balance_of[from_] -= 1
-    self.balance_of[to] += 1
-    self.owner_of[token_id] = to
+    self._transfer(from_, to, token_id)
 
     # Update CCCD
     old_data: LandData = self.land_data[token_id]
@@ -127,7 +144,6 @@ def transferWithCCCD(from_: address, to: address, token_id: uint256, new_cccd: S
     self.land_data[token_id] = LandData(
         token_id=token_id,
         owner_cccd=new_cccd,
-        metadata_uri=old_data.metadata_uri
     )
 
     log Transfer(_from=from_, _to=to, _tokenId=token_id)

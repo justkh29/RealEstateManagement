@@ -314,38 +314,65 @@ class MarketplaceTab(QWidget):
         self.land_registry_contract = land_registry_contract
         self.land_nft_contract = land_nft_contract
 
-        main_layout = QHBoxLayout(self)
+        # Sử dụng QVBoxLayout để xếp các thành phần theo chiều dọc
+        # (Header ở trên, Danh sách ở dưới)
+        main_layout = QVBoxLayout(self)
 
-        # Cột Lọc (tạm thời để trống)
-        filter_panel = QFrame()
-        filter_panel.setFrameShape(QFrame.StyledPanel)
-        filter_panel.setFixedWidth(200)
-        filter_layout = QVBoxLayout(filter_panel)
-        filter_layout.addWidget(QLabel("<b>Bộ lọc (sắp có)</b>"))
-        main_layout.addWidget(filter_panel)
+        # 1. Header: Chứa Tiêu đề và Nút Refresh
+        header_layout = QHBoxLayout()
         
-        # Cột Danh sách
+        title_label = QLabel("Thị trường Bất động sản")
+        title_label.setStyleSheet("font-size: 18px; font-weight: bold; color: #2c3e50;")
+        
+        self.refresh_button = QPushButton("🔄 Làm mới")
+        self.refresh_button.setFixedWidth(120)
+        self.refresh_button.setStyleSheet("padding: 5px; font-weight: bold;")
+        self.refresh_button.clicked.connect(self.load_listings)
+
+        header_layout.addWidget(title_label)
+        header_layout.addStretch() # Khoảng trống để đẩy nút sang phải
+        header_layout.addWidget(self.refresh_button)
+        
+        # Thêm header vào layout chính
+        main_layout.addLayout(header_layout)
+
+        # 2. Khu vực hiển thị danh sách (Scroll Area)
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.NoFrame) # Bỏ viền để nhìn thoáng hơn
+        
         grid_container = QWidget()
         self.grid_layout = QGridLayout(grid_container)
         self.grid_layout.setAlignment(Qt.AlignTop)
+        self.grid_layout.setSpacing(20) # Tăng khoảng cách giữa các thẻ cho đẹp
+        
         scroll_area.setWidget(grid_container)
+        
+        # Thêm vùng cuộn vào layout chính
         main_layout.addWidget(scroll_area)
 
+        # Tải dữ liệu lần đầu
         self.load_listings()
 
     def load_listings(self):
-        # Xóa các widget cũ
+        # Hiệu ứng loading cho nút bấm
+        self.refresh_button.setEnabled(False)
+        self.refresh_button.setText("Đang tải...")
+        QApplication.processEvents()
+
+        # Xóa các widget cũ trong lưới
         for i in reversed(range(self.grid_layout.count())): 
             widget = self.grid_layout.itemAt(i).widget()
             if widget: widget.setParent(None)
 
         try:
-            # Truy cập `next_listing_id` như một thuộc tính
             next_id = self.marketplace_contract.next_listing_id
             
             row, col = 0, 0
+            # Lấy độ rộng của vùng hiển thị để tính số cột (tùy chỉnh nếu muốn)
+            # Mặc định cố định 3 cột
+            max_columns = 3 
+
             for i in range(1, next_id):
                 listing_tuple = self.marketplace_contract.listings(i)
                 listing_data = parse_listing_tuple(listing_tuple)
@@ -354,6 +381,7 @@ class MarketplaceTab(QWidget):
                     token_id = listing_data.token_id
                     seller_address = self.land_nft_contract.ownerOf(token_id)
                     
+                    # Không hiển thị đất do chính mình bán
                     if seller_address.lower() == self.user_account.address.lower():
                         continue 
 
@@ -361,16 +389,21 @@ class MarketplaceTab(QWidget):
                     land_data = parse_land_parcel_tuple(land_tuple)
                     
                     if land_data and land_data.id != 0:
-                        # Truyền các đối tượng dataclass đã được parse
                         card = ListingCardWidget(listing_data, land_data, seller_address)
                         card.view_details_requested.connect(self.handle_view_details)
                         self.grid_layout.addWidget(card, row, col)
+                    
+                    # Logic xuống dòng
                     col += 1
-                    if col >= 3:
+                    if col >= max_columns:
                         col = 0
                         row += 1
         except Exception as e:
             QMessageBox.critical(self, "Lỗi", f"Không thể tải danh sách niêm yết: {e}")
+        
+        # Trả lại trạng thái nút bấm
+        self.refresh_button.setEnabled(True)
+        self.refresh_button.setText("🔄 Làm mới")
 
     @Slot(int, str)
     def handle_view_details(self, listing_id, seller_address):
@@ -390,7 +423,6 @@ class MarketplaceTab(QWidget):
                     self.load_listings()
         except Exception as e:
             QMessageBox.critical(self, "Lỗi", f"Không thể hiển thị chi tiết: {e}")
-
 # =============================================================================
 # TAB CỦA USER: ĐẤT CỦA TÔI (MY ACCOUNT)
 # =============================================================================

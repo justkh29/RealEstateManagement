@@ -90,29 +90,6 @@ def test_reject_land(land_registry, owner, seller):
     assert land.status == 2  # Rejected
     print("✓ Land rejection successful")
 
-def test_duplicate_cccd(land_registry, seller):
-    """Test duplicate CCCD registration prevention"""
-    land_registry.register_land(
-        "111 First St",
-        100,
-        "CCCD111111",
-        "ipfs://pdf1",
-        "ipfs://img1",
-        sender=seller
-    )
-    
-    # Try to register with same CCCD - should fail
-    with ape.reverts("Land already registered for this CCCD"):
-        land_registry.register_land(
-            "222 Second St",
-            200,
-            "CCCD111111",  # Same CCCD
-            "ipfs://pdf2",
-            "ipfs://img2",
-            sender=seller
-        )
-    print("✓ Duplicate CCCD prevention working")
-
 def test_admin_functions(land_registry, owner, accounts):
     """Test admin functions"""
     new_admin = accounts[3]

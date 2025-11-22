@@ -19,7 +19,7 @@ def test_nft_mint(land_nft, owner, seller):
     
     land_data = land_nft.get_land_data(1)
     assert land_data.owner_cccd == "CCCD123"
-    assert land_data.metadata_uri == "metadata://test1"
+    assert land_nft.token_uri[1] == "metadata://test1"
     print("✓ NFT minting successful")
 
 def test_nft_transfer(land_nft, owner, seller, buyer):
