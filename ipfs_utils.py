@@ -3,7 +3,7 @@ import requests
 import json
 
 # Địa chỉ IP của máy chạy backend Flask
-FLASK_BACKEND_URL = "http://192.168.0.140:8000" # Thay bằng IP của bạn
+FLASK_BACKEND_URL = "http://192.168.43.167:8000" # Thay bằng IP của bạn
 def upload_json_to_ipfs(json_data):
     """
     Gửi một đối tượng Python dictionary đến backend Flask để tải lên IPFS.

@@ -17,6 +17,7 @@ from ipfs_utils import upload_file_to_ipfs, upload_json_to_ipfs, FLASK_BACKEND_U
 
 from dataclasses import dataclass
 
+IPFS_URL_VIEWER = "http://192.168.43.167:8080/ipfs/"
 USE_MOCK_DATA = True
 # =============================================================================
 # CÁC LỚP DỮ LIỆU (DATA CLASSES)
@@ -250,7 +251,7 @@ class ListingDetailDialog(QDialog):
         form_layout.addRow("<b>Người bán:</b>", seller_label)
 
         pdf_button = QPushButton("Xem Giấy tờ pháp lý (PDF)")
-        pdf_button.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(land_data.pdf_uri.replace("ipfs://", "http://127.0.0.1:8080/ipfs/"))))
+        pdf_button.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(land_data.pdf_uri.replace("ipfs://", IPFS_URL_VIEWER))))
         form_layout.addRow(pdf_button)
         
         layout.addLayout(form_layout)
@@ -534,7 +535,7 @@ class MyAccountTab(QWidget):
 
                 # === BƯỚC 3: GỬI GIAO DỊCH CREATE_LISTING ===
                 print(f" -> Bước 3: Gửi giao dịch create_listing với CCCD tự động: {seller_cccd}")
-                listing_fee = self.marketplace_contract.listing_fee()
+                listing_fee = self.marketplace_contract.listing_fee
                 
                 receipt = self.marketplace_contract.create_listing(
                     token_id,
@@ -807,12 +808,12 @@ class LandDetailDialog(QDialog):
         form_layout.addRow("Diện tích (m2):", QLabel(str(self.land_data.area)))
         
         # Tạo link có thể click được
-        pdf_link = f"<a href='{self.land_data.pdf_uri.replace('ipfs://', 'http://127.0.0.1:8080/ipfs/')}'>Mở file PDF</a>"
+        pdf_link = f"<a href='{self.land_data.pdf_uri.replace('ipfs://', IPFS_URL_VIEWER)}'>Mở file PDF</a>"
         pdf_label = QLabel(pdf_link)
         pdf_label.setOpenExternalLinks(True)
         form_layout.addRow("Link PDF:", pdf_label)
         
-        image_link = f"<a href='{self.land_data.image_uri.replace('ipfs://', 'http://127.0.0.1:8080/ipfs/')}'>Mở file Hình ảnh</a>"
+        image_link = f"<a href='{self.land_data.image_uri.replace('ipfs://', IPFS_URL_VIEWER)}'>Mở file Hình ảnh</a>"
         image_label = QLabel(image_link)
         image_label.setOpenExternalLinks(True)
         form_layout.addRow("Link Hình ảnh:", image_label)

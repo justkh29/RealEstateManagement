@@ -74,7 +74,6 @@ class MockLandRegistry:
         assert len(_owner_cccd) > 0, "Mock: Owner CCCD cannot be empty"
         assert len(_pdf_uri) > 0, "Mock: PDF URI cannot be empty"
         assert len(_image_uri) > 0, "Mock: Image URI cannot be empty"
-        assert self._land_ids_data.get(_owner_cccd) is None, f"Mock: Land already registered for this CCCD: {_owner_cccd}"
 
         # 2. Tạo bản ghi mới
         land_id = self.next_land_id

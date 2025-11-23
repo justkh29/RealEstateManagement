@@ -6,7 +6,7 @@ import json # Thêm import này
 import io
 app = Flask(__name__)
 
-IPFS_API = "http://192.168.0.140:5001/api/v0"
+IPFS_API = "http://192.168.43.167:5001/api/v0"
 
 # Endpoint tải file (giữ nguyên)
 @app.route("/upload", methods=["POST"])
@@ -91,4 +91,4 @@ def get_image(cid):
 
 if __name__ == "__main__":
     # Đảm bảo chạy backend này trước khi chạy GUI
-    app.run(host="192.168.0.140", port=8000) # Host 0.0.0.0 để có thể truy cập từ máy khác trong cùng mạng
+    app.run(host="192.168.43.167", port=8000) # Host 0.0.0.0 để có thể truy cập từ máy khác trong cùng mạng
