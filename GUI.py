@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import QObject, QThread, Qt, Signal, QRegularExpression, QUrl, Slot
 from PySide6.QtGui import QFont, QRegularExpressionValidator, QDesktopServices, QPixmap
-from ape import accounts, project
+from ape import accounts, project, networks
 from mock_blockchain import (
     MockAccount, MockLandRegistry, MockLandNFT, MockMarketplace,
     MOCK_ADMIN_ADDRESS, MOCK_USER_A_ADDRESS, MOCK_USER_B_ADDRESS
@@ -18,10 +18,6 @@ from ipfs_utils import upload_file_to_ipfs, upload_json_to_ipfs, FLASK_BACKEND_U
 from dataclasses import dataclass
 
 USE_MOCK_DATA = True
-
-if not USE_MOCK_DATA:
-    LAND_REGISTRY_ADDRESS = "0x..." 
-    MARKETPLACE_ADDRESS = "0x..."
 # =============================================================================
 # CÁC LỚP DỮ LIỆU (DATA CLASSES)
 # Định nghĩa cấu trúc dữ liệu sạch mà GUI sẽ sử dụng.
@@ -1275,6 +1271,7 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("Real Estate Management System")
         self.setGeometry(100, 100, 600, 400)
+            
         # Initially, only the login window is shown
         self.central_widget = QStackedWidget()
         self.setCentralWidget(self.central_widget)

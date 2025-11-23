@@ -2,8 +2,11 @@
 # SPDX-License-Identifier: MIT
 # @title Marketplace
 
+# Bo sung cac ham kiem tra uy quyen theo chuan ERC-721
 interface ILandNFT:
     def ownerOf(_token_id: uint256) -> address: view
+    def isApprovedForAll(_owner: address, _operator: address) -> bool: view
+    def getApproved(_token_id: uint256) -> address: view
     def transferFrom(_from: address, _to: address, _token_id: uint256): nonpayable
     def transferWithCCCD(_from: address, _to: address, _token_id: uint256, _new_cccd: String[20]): nonpayable
 
@@ -57,7 +60,8 @@ struct Transaction:
 
 listings: public(HashMap[uint256, Listing])
 transactions: public(HashMap[uint256, Transaction])
-escrow_balances: public(HashMap[address, uint256])
+escrow_balances: public(HashMap[address, uint256]) # Giu nguyen de theo doi tien ky quy
+collected_fees: public(uint256) # BIẾN MỚI: Theo dõi tổng phí thu được
 
 @deploy
 def __init__(_land_nft: address, _listing_fee: uint256, _cancel_penalty: uint256):
@@ -73,7 +77,7 @@ def __init__(_land_nft: address, _listing_fee: uint256, _cancel_penalty: uint256
 def create_listing(_token_id: uint256, _seller_cccd: String[20], _price: uint256):
     assert msg.value >= self.listing_fee, "Listing fee required"
     
-    # Refund excess payment
+    # Hoan lai phan tien thua
     if msg.value > self.listing_fee:
         send(msg.sender, msg.value - self.listing_fee)
 
@@ -81,6 +85,15 @@ def create_listing(_token_id: uint256, _seller_cccd: String[20], _price: uint256
     assert nft_owner != empty(address), "Token does not exist"
     assert nft_owner == msg.sender, "Not NFT owner"
 
+    # BO SUNG QUAN TRONG: Kiem tra uy quyen (Approval)
+    # Kiem tra uy quyen toan bo (setApprovalForAll)
+    is_approved_all: bool = staticcall ILandNFT(self.land_nft).isApprovedForAll(msg.sender, self)
+    # Kiem tra uy quyen cu the (approve)
+    approved_address: address = staticcall ILandNFT(self.land_nft).getApproved(_token_id)
+
+    assert is_approved_all or approved_address == self, "Marketplace not approved to transfer NFT"
+
+    # Tiep tuc tao Listing
     listing_id: uint256 = self.next_listing_id
     self.next_listing_id += 1
 
@@ -92,6 +105,8 @@ def create_listing(_token_id: uint256, _seller_cccd: String[20], _price: uint256
         status=0,  # Active
         created_at=block.timestamp
     )
+
+    self.collected_fees += self.listing_fee
 
     log ListingCreated(
         listing_id=listing_id,
@@ -120,6 +135,7 @@ def initiate_transaction(_listing_id: uint256, _buyer_cccd: String[20]):
         created_at=block.timestamp
     )
 
+    # Luu tien ky quy vao Escrow
     self.escrow_balances[msg.sender] += msg.value
     self.listings[_listing_id].status = 1  # InTransaction
 
@@ -143,7 +159,8 @@ def approve_transaction(_tx_id: uint256):
     seller: address = staticcall ILandNFT(self.land_nft).ownerOf(listing.token_id)
     assert seller != empty(address), "NFT does not exist"
 
-    # SỬA: Dùng transferWithCCCD để update CCCD
+    # 1. Chuyen NFT va cap nhat CCCD
+    # Marketplace su dung uy quyen (approval) de chuyen token tu Seller sang Buyer
     extcall ILandNFT(self.land_nft).transferWithCCCD(
         seller,
         tx_data.buyer_address,
@@ -151,13 +168,13 @@ def approve_transaction(_tx_id: uint256):
         tx_data.buyer_cccd
     )
 
-    # Transfer payment to seller
+    # 2. Chuyen payment cho seller
     send(seller, tx_data.amount)
 
-    # Update statuses
+    # 3. Cap nhat statuses va tru tien ky quy khoi buyer balance
     self.transactions[_tx_id].status = 1  # Approved
     self.listings[tx_data.listing_id].status = 2  # Completed
-    self.escrow_balances[tx_data.buyer_address] -= tx_data.amount
+    self.escrow_balances[tx_data.buyer_address] -= tx_data.amount # Cap nhat ke toan
 
     log TransactionApproved(
         tx_id=_tx_id,
@@ -174,11 +191,11 @@ def reject_transaction(_tx_id: uint256, _reason: String[64]):
     tx_data: Transaction = self.transactions[_tx_id]
     assert tx_data.status == 0, "Transaction not pending"
 
-    # Refund buyer
+    # 1. Hoan tien buyer
     send(tx_data.buyer_address, tx_data.amount)
     
-    # Update statuses
-    self.escrow_balances[tx_data.buyer_address] -= tx_data.amount
+    # 2. Cap nhat statuses
+    self.escrow_balances[tx_data.buyer_address] -= tx_data.amount # Cap nhat ke toan
     self.transactions[_tx_id].status = 2  # Rejected
     self.listings[tx_data.listing_id].status = 0  # Active
 
@@ -193,14 +210,12 @@ def buyer_cancel(_tx_id: uint256):
     penalty: uint256 = self.cancel_penalty
     assert tx_data.amount >= penalty, "Penalty exceeds deposit"
     refund: uint256 = tx_data.amount - penalty
-
-    # Refund minus penalty (penalty stays in contract as cancellation fee)
+    self.collected_fees += penalty
+    # 1. Hoan tien sau khi tru phi phat (penalty giu lai trong contract)
     send(tx_data.buyer_address, refund)
     
-    # Clear the entire escrow balance for this transaction
-    self.escrow_balances[tx_data.buyer_address] -= tx_data.amount
-    
-    # Update statuses
+    # 2. Cap nhat statuses
+    self.escrow_balances[tx_data.buyer_address] -= tx_data.amount # Tru toan bo so tien da gui
     self.transactions[_tx_id].status = 3  # Cancelled
     self.listings[tx_data.listing_id].status = 0  # Active
 
@@ -218,7 +233,15 @@ def set_fees(_listing_fee: uint256, _cancel_penalty: uint256):
 @external
 def withdraw_fees():
     assert msg.sender == self.admin, "Only admin"
-    send(self.admin, self.balance)
+    
+    amount: uint256 = self.collected_fees
+    assert amount > 0, "No fees to withdraw"
+    
+    # (Reentrancy protection - though not strictly needed here)
+    self.collected_fees = 0
+    
+    # Withdraw
+    send(self.admin, amount)
 
 @view
 @external

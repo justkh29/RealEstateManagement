@@ -63,7 +63,7 @@ def test_approve_land(land_registry, land_nft, owner, seller):
     # Check NFT data
     land_data = land_nft.get_land_data(1)
     assert land_data.owner_cccd == "CCCD789012"
-    assert land_data.metadata_uri == "ipfs://metadata456"
+    assert land_nft.token_uri(1) == "ipfs://metadata456"
     print("✓ Land approval and NFT minting successful")
 
 def test_reject_land(land_registry, owner, seller):
