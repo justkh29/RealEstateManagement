@@ -1438,7 +1438,7 @@ class MainWindow(QMainWindow):
         self.current_user = None
         self.mock_registry = MockLandRegistry()
         self.mock_nft = MockLandNFT(self.mock_registry)
-        self.mock_marketplace = MockMarketplace(MOCK_ADMIN_ADDRESS)
+        self.mock_marketplace = MockMarketplace(MOCK_ADMIN_ADDRESS, self.mock_nft)
         # Bắt đầu ở trang đăng nhập
         self.show_login_ui()
     

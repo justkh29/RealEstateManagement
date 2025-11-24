@@ -25,6 +25,7 @@ class MockLandRegistry:
         self.next_land_id = 8
         self.admin = MOCK_ADMIN_ADDRESS
         self.land_nft = MOCK_LAND_NFT_ADDRESS
+
         
         # Lưu trữ dữ liệu dưới dạng tuple, giống hệt struct
         self._land_parcels_data = { # id, address, area, cccd, status, pdf, image
@@ -141,22 +142,39 @@ class MockLandRegistry:
     # Trong file mock_blockchain.py -> class MockLandRegistry
 
     def update_ownership(self, token_id, new_owner, new_cccd, sender):
+        # 0. Ép kiểu token_id về int để đảm bảo nhất quán
+        token_id = int(token_id)
+        
         print(f"[MOCK Registry] Updating ownership for land #{token_id} to {new_owner}")
         
         # 1. Xác định chủ cũ
         old_owner = self._land_to_owner_data.get(token_id)
         
+        # --- DEBUG LOG (Sẽ giúp bạn thấy ngay vấn đề) ---
+        print(f"      [DEBUG] Old owner found: {old_owner}")
+        if old_owner:
+            current_list = self._owner_to_lands_data.get(old_owner, [])
+            print(f"      [DEBUG] Old owner's list before remove: {current_list}")
+            print(f"      [DEBUG] Is {token_id} in list? {token_id in current_list}")
+        # -----------------------------------------------
+
         # 2. Xóa khỏi danh sách chủ cũ
         if old_owner and old_owner in self._owner_to_lands_data:
+            # Sử dụng try/except để an toàn hơn, hoặc kiểm tra in
             if token_id in self._owner_to_lands_data[old_owner]:
-                self._owner_to_lands_data[old_owner].remove(token_id) # Python list remove
+                self._owner_to_lands_data[old_owner].remove(token_id)
                 print(f"      -> Removed {token_id} from {old_owner}")
+            else:
+                print(f"      [WARNING] Token #{token_id} not found in old owner's list to remove!")
 
         # 3. Thêm vào danh sách chủ mới
         if new_owner not in self._owner_to_lands_data:
             self._owner_to_lands_data[new_owner] = []
-        self._owner_to_lands_data[new_owner].append(token_id)
-        print(f"      -> Added {token_id} to {new_owner}")
+        
+        # Kiểm tra để tránh duplicate (thêm 2 lần)
+        if token_id not in self._owner_to_lands_data[new_owner]:
+            self._owner_to_lands_data[new_owner].append(token_id)
+            print(f"      -> Added {token_id} to {new_owner}")
 
         # 4. Cập nhật mapping land_to_owner
         self._land_to_owner_data[token_id] = new_owner
@@ -238,9 +256,6 @@ class MockLandNFT:
         return {"txn_hash": "0xmock_approval_tx"}
         
     def transferWithCCCD(self, from_, to, token_id, new_cccd, sender):
-        # Mô phỏng việc thay đổi chủ sở hữu trong registry
-        self._registry._land_to_owner_data[token_id] = to
-        # Mô phỏng việc thay đổi CCCD trong registry (nếu cần)
         parcel = list(self._registry._land_parcels_data[token_id])
         parcel[3] = new_cccd
         self._registry._land_parcels_data[token_id] = tuple(parcel)
@@ -250,13 +265,14 @@ class MockLandNFT:
 
 
 class MockMarketplace:
-    def __init__(self, admin_address):
+    def __init__(self, admin_address, nft_contract_mock=None):
         print("!!! MOCK (Tuple Mode): Marketplace instance created !!!")
         self.admin = admin_address
         self.listing_fee = 10000000000000000
         self.cancel_penalty = 50000000000000000
         self.next_listing_id = 3
         self.land_nft = MOCK_LAND_NFT_ADDRESS
+        self._nft_contract_instance = nft_contract_mock
         self.address = MOCK_MARKETPLACE_ADDRESS
         self.next_tx_id = 2
         self._transactions_data = {} # Sẽ lưu các giao dịch đang chờ
@@ -280,7 +296,7 @@ class MockMarketplace:
     def create_listing(self, token_id, seller_cccd, price, sender, value):
         assert value >= self.listing_fee
         listing_id = self.next_listing_id
-        self._listings_data[listing_id] = (listing_id, token_id, seller_cccd, price, 0, 0)
+        self._listings_data[listing_id] = (listing_id, int(token_id), seller_cccd, price, 0, 0)
         self.next_listing_id += 1
         return {"txn_hash": f"0xmock_create_listing_{listing_id}"}
 
@@ -345,17 +361,61 @@ class MockMarketplace:
         return self._transactions_data.get(tx_id, (0, 0, "", "0x"+"0"*40, 0, 99, 0))
     
     def approve_transaction(self, tx_id, sender):
+        """
+        Duyệt giao dịch: Chuyển tiền, Chuyển NFT, Cập nhật trạng thái.
+        """
         assert sender.address == self.admin, "Mock: Not admin"
+        
+        # 1. Lấy dữ liệu Transaction
+        # Struct Transaction: tx_id, listing_id, buyer_cccd, buyer_address, amount, status, created_at
+        if tx_id not in self._transactions_data:
+             raise Exception("Transaction not found")
+             
         tx = list(self._transactions_data[tx_id])
+        
+        # Kiểm tra trạng thái (index 5 là status)
         assert tx[5] == 0, "Mock: Transaction not pending"
-        tx[5] = 1 # Approved
+        
+        listing_id = tx[1]
+        buyer_cccd = tx[2]
+        buyer_address = tx[3]
+        amount = tx[4] # Dùng để trừ escrow
+        
+        # 2. Lấy dữ liệu Listing
+        # Struct Listing: listing_id, token_id, seller_cccd, price, status, created_at
+        listing = list(self._listings_data[listing_id])
+        token_id = listing[1]
+        
+        # 3. Xác định người bán (Seller Address)
+        # Vì listing chỉ lưu CCCD, ta phải hỏi NFT contract xem ai đang giữ token này
+        if self._nft_contract_instance:
+            seller_address = self._nft_contract_instance.ownerOf(token_id)
+            
+            # 4. Thực hiện chuyển nhượng NFT (Gọi sang contract NFT)
+            print(f"[MOCK Marketplace] Calling NFT transfer: {seller_address} -> {buyer_address}")
+            self._nft_contract_instance.transferWithCCCD(
+                seller_address,  # From
+                buyer_address,   # To
+                token_id,        # Token ID
+                buyer_cccd,      # New CCCD
+                self             # Sender là Marketplace
+            )
+        else:
+            print("WARNING: NFT Contract Instance missing in MockMarketplace!")
+
+        # 5. Cập nhật tiền ký quỹ (Escrow)
+        if buyer_address in self._escrow_balances:
+            self._escrow_balances[buyer_address] -= amount
+
+        # 6. Cập nhật trạng thái Transaction -> Approved (1)
+        tx[5] = 1 
         self._transactions_data[tx_id] = tuple(tx)
         
-        listing = list(self._listings_data[tx[1]]) # tx[1] là listing_id
-        listing[4] = 2 # Completed
-        self._listings_data[tx[1]] = tuple(listing)
+        # 7. Cập nhật trạng thái Listing -> Completed (2)
+        listing[4] = 2
+        self._listings_data[listing_id] = tuple(listing)
         
-        print(f"[MOCK Marketplace] Transaction #{tx_id} approved.")
+        print(f"[MOCK Marketplace] Transaction #{tx_id} approved. NFT transferred.")
         return {"txn_hash": f"0xmock_approve_tx_{tx_id}"}
         
     def reject_transaction(self, tx_id, reason, sender):
