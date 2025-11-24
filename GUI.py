@@ -750,7 +750,9 @@ class RegisterLandTab(QWidget): # Tạo một class riêng cho tab này
         self.land_registry_contract = land_registry_contract
 
         layout = QVBoxLayout(self)
-        form_layout = QFormLayout()
+
+        form_group = QGroupBox("Đăng ký Mới")
+        form_layout = QFormLayout(form_group)
         
         self.land_address_input = QLineEdit()
         self.area_input = QLineEdit()
@@ -785,12 +787,30 @@ class RegisterLandTab(QWidget): # Tạo một class riêng cho tab này
         form_layout.addRow("Giấy tờ (PDF):", pdf_layout)
         form_layout.addRow("Hình ảnh:", image_layout)
         
-        self.register_button = QPushButton("Gửi Hồ sơ Đăng ký")
-        self.register_button.clicked.connect(self.handle_register)
+        layout.addWidget(form_group)
 
-        layout.addLayout(form_layout)
+
+        self.register_button = QPushButton("Gửi Hồ sơ Đăng ký")
+        self.register_button.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 8px;")
+        self.register_button.clicked.connect(self.handle_register)
         layout.addWidget(self.register_button, alignment=Qt.AlignCenter)
 
+        history_group = QGroupBox("Lịch sử Đăng ký của Bạn")
+        history_layout = QVBoxLayout(history_group)
+
+        self.history_table = QTableWidget()
+        self.history_table.setColumnCount(4)
+        self.history_table.setHorizontalHeaderLabels(["ID", "Địa chỉ", "Ngày đăng ký", "Trạng thái"])
+        self.history_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.history_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        # Giới hạn chiều cao để không chiếm hết chỗ của form
+        self.history_table.setMinimumHeight(150) 
+        
+        history_layout.addWidget(self.history_table)
+        layout.addWidget(history_group)
+
+        # Load lịch sử lần đầu
+        self.populate_history()
         layout.addStretch(1) 
 
     def _clear_form(self):
@@ -842,10 +862,53 @@ class RegisterLandTab(QWidget): # Tạo một class riêng cho tab này
             QMessageBox.information(self, "Thành công", f"Đã gửi hồ sơ đăng ký thành công!\nTx: {getattr(receipt, 'txn_hash', 'N/A')}")
             # Xóa các ô input sau khi thành công
             self._clear_form()
-            # ... clear các ô khác
+            self.populate_history() 
         except Exception as e:
             QMessageBox.critical(self, "Lỗi", f"Gửi hồ sơ thất bại: {e}")
+    
+    def populate_history(self):
+        """Tải danh sách đất mà user này đã đăng ký (bao gồm cả Pending)."""
+        self.history_table.setRowCount(0)
+        try:
+            # Lấy danh sách ID đất của user (Mock/Contract cần hỗ trợ hàm này)
+            # Lưu ý: Hàm owner_to_lands trả về cả đất đã duyệt và chưa duyệt
+            my_land_ids = self.land_registry_contract.owner_to_lands(self.user_account.address)
+            
+            # Nếu muốn sắp xếp mới nhất lên đầu:
+            # my_land_ids.reverse() 
 
+            self.history_table.setRowCount(len(my_land_ids))
+            
+            for row, land_id in enumerate(my_land_ids):
+                # Lấy dữ liệu và parse
+                land_tuple = self.land_registry_contract.land_parcels(land_id)
+                land_data = parse_land_parcel_tuple(land_tuple)
+                
+                if land_data:
+                    # ID
+                    self.history_table.setItem(row, 0, QTableWidgetItem(str(land_data.id)))
+                    # Địa chỉ
+                    self.history_table.setItem(row, 1, QTableWidgetItem(land_data.land_address))
+                    # Ngày (Nếu contract không lưu ngày đk, có thể để trống hoặc update contract)
+                    self.history_table.setItem(row, 2, QTableWidgetItem("-")) 
+                    
+                    # Trạng thái (Tô màu cho đẹp)
+                    status_text = "Chờ duyệt"
+                    color = Qt.blue
+                    if land_data.status == 1: 
+                        status_text = "Đã duyệt"
+                        color = Qt.green
+                    elif land_data.status == 2: 
+                        status_text = "Bị từ chối"
+                        color = Qt.red
+                    
+                    status_item = QTableWidgetItem(status_text)
+                    status_item.setForeground(color)
+                    status_item.setFont(QFont("Arial", 8, QFont.Bold))
+                    self.history_table.setItem(row, 3, status_item)
+
+        except Exception as e:
+            print(f"Lỗi tải lịch sử: {e}")
 
 # =============================================================================
 # TAB CỦA ADMIN: DUYỆT ĐĂNG KÝ ĐẤT
