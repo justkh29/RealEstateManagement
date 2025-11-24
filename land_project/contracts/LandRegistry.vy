@@ -180,6 +180,62 @@ def reject_land(_land_id: uint256):
     
     log LandRejected(land_id=_land_id, admin=msg.sender)
 
+@external
+def update_ownership(token_id: uint256, new_owner: address, new_cccd: String[20]):
+    """
+    Được gọi bởi LandNFT để cập nhật Registry sau khi chuyển nhượng.
+    Sử dụng kỹ thuật Swap-and-Pop để xóa đất khỏi danh sách chủ cũ.
+    """
+    assert msg.sender == self.land_nft, "Only LandNFT can call this"
+    
+    # 1. Xác định chủ cũ
+    old_owner: address = self.land_to_owner[token_id]
+    
+    # 2. Xóa token_id khỏi danh sách của chủ cũ (Swap and Pop)
+    # Chúng ta phải duyệt qua mảng để tìm vị trí của token_id
+    # Lưu ý: Giới hạn vòng lặp phải bằng max size của DynArray (ở đây là 1000)
+    old_list_len: uint256 = len(self.owner_to_lands[old_owner])
+    for i: uint256 in range(1000): 
+        # Điều kiện dừng sớm để tiết kiệm gas
+        if i >= old_list_len:
+            break
+            
+        if self.owner_to_lands[old_owner][i] == token_id:
+            # Đã tìm thấy vị trí. 
+            # Nếu nó không phải là phần tử cuối cùng, hãy tráo nó với phần tử cuối
+            last_index: uint256 = old_list_len - 1
+            if i != last_index:
+                self.owner_to_lands[old_owner][i] = self.owner_to_lands[old_owner][last_index]
+            
+            # Xóa phần tử cuối cùng
+            self.owner_to_lands[old_owner].pop()
+            
+            # Cập nhật biến đếm
+            self.lands_count[old_owner] -= 1
+            break # Kết thúc vòng lặp ngay sau khi xóa
+
+    # 3. Thêm vào danh sách của chủ mới
+    if self.lands_count[new_owner] == 0:
+        self.owner_to_lands[new_owner] = [token_id]
+    else:
+        self.owner_to_lands[new_owner].append(token_id)
+    self.lands_count[new_owner] += 1
+    
+    # 4. Cập nhật mapping land_to_owner
+    self.land_to_owner[token_id] = new_owner
+    
+    # 5. Cập nhật thông tin CCCD trong struct
+    parcel: LandParcel = self.land_parcels[token_id]
+    updated_parcel: LandParcel = LandParcel(
+        id=parcel.id,
+        land_address=parcel.land_address,
+        area=parcel.area,
+        owner_cccd=new_cccd, # Cập nhật CCCD mới
+        status=parcel.status,
+        pdf_uri=parcel.pdf_uri,
+        image_uri=parcel.image_uri
+    )
+    self.land_parcels[token_id] = updated_parcel
 # =====================================================
 # ===================== VIEWERS =======================
 # =====================================================

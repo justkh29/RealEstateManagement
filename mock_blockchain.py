@@ -138,6 +138,36 @@ class MockLandRegistry:
         print(f"      -> Land #{land_id} status changed to Rejected.")
         return {"txn_hash": f"0xmock_reject_tx_hash_{land_id}"}
     
+    # Trong file mock_blockchain.py -> class MockLandRegistry
+
+    def update_ownership(self, token_id, new_owner, new_cccd, sender):
+        print(f"[MOCK Registry] Updating ownership for land #{token_id} to {new_owner}")
+        
+        # 1. Xác định chủ cũ
+        old_owner = self._land_to_owner_data.get(token_id)
+        
+        # 2. Xóa khỏi danh sách chủ cũ
+        if old_owner and old_owner in self._owner_to_lands_data:
+            if token_id in self._owner_to_lands_data[old_owner]:
+                self._owner_to_lands_data[old_owner].remove(token_id) # Python list remove
+                print(f"      -> Removed {token_id} from {old_owner}")
+
+        # 3. Thêm vào danh sách chủ mới
+        if new_owner not in self._owner_to_lands_data:
+            self._owner_to_lands_data[new_owner] = []
+        self._owner_to_lands_data[new_owner].append(token_id)
+        print(f"      -> Added {token_id} to {new_owner}")
+
+        # 4. Cập nhật mapping land_to_owner
+        self._land_to_owner_data[token_id] = new_owner
+        
+        # 5. Cập nhật CCCD trong parcel (Tuple update)
+        if token_id in self._land_parcels_data:
+            parcel = list(self._land_parcels_data[token_id])
+            parcel[3] = new_cccd # Index 3 là owner_cccd
+            self._land_parcels_data[token_id] = tuple(parcel)
+        
+        return {"txn_hash": f"0xmock_update_owner_{token_id}"}
     # ... (các hàm mock khác nếu cần, nhưng GUI nên dùng các hàm public ở trên)
     # Hàm này vẫn có thể tồn tại để tiện lợi hơn cho GUI
 
@@ -215,6 +245,7 @@ class MockLandNFT:
         parcel[3] = new_cccd
         self._registry._land_parcels_data[token_id] = tuple(parcel)
         print(f"[MOCK NFT] transferWithCCCD successful for token {token_id}")
+        self._registry.update_ownership(token_id, to, new_cccd, self) 
         return {"txn_hash": f"0xmock_transfer_{token_id}"}
 
 

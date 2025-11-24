@@ -1,8 +1,10 @@
 # @version ^0.4.3
 # SPDX-License-Identifier: MIT
 
-# ===================== EVENTS =====================
-
+# ===================== INTERFACE AND EVENTS =====================
+interface ILandRegistry:
+    def update_ownership(token_id: uint256, new_owner: address, new_cccd: String[20]): nonpayable
+    
 event Transfer:
     _from: indexed(address)
     _to: indexed(address)
@@ -145,6 +147,7 @@ def transferWithCCCD(from_: address, to: address, token_id: uint256, new_cccd: S
         token_id=token_id,
         owner_cccd=new_cccd,
     )
+    extcall ILandRegistry(self.minter).update_ownership(token_id, to, new_cccd)
 
     log Transfer(_from=from_, _to=to, _tokenId=token_id)
     log CCCDUpdated(token_id=token_id, old_cccd=old_cccd, new_cccd=new_cccd)
