@@ -12,12 +12,11 @@ from mock_blockchain import (
     MockAccount, MockLandRegistry, MockLandNFT, MockMarketplace,
     MOCK_ADMIN_ADDRESS, MOCK_USER_A_ADDRESS, MOCK_USER_B_ADDRESS
 )
-from ipfs_utils import upload_file_to_ipfs, upload_json_to_ipfs, FLASK_BACKEND_URL
+from ipfs_utils import upload_file_to_ipfs, upload_json_to_ipfs, FLASK_BACKEND_URL, IPFS_URL_VIEWER
 
 
 from dataclasses import dataclass
 
-IPFS_URL_VIEWER = "http://192.168.43.167:8080/ipfs/"
 USE_MOCK_DATA = True
 # =============================================================================
 # CÁC LỚP DỮ LIỆU (DATA CLASSES)
@@ -51,6 +50,16 @@ class ListingData:
     status: int
     created_at: int
 
+@dataclass
+class TransactionData:
+    tx_id: int
+    listing_id: int
+    buyer_cccd: str
+    buyer_address: str
+    amount: int
+    status: int # 0: Pending, 1: Approved, 2: Rejected, 3: Cancelled
+    created_at: int
+
 # =============================================================================
 # CÁC HÀM CHUYỂN ĐỔI (PARSERS / ADAPTERS)
 # Chịu trách nhiệm "dịch" dữ liệu thô từ blockchain (Tuple) sang Data Class.
@@ -80,6 +89,10 @@ def parse_listing_tuple(data_tuple: tuple) -> ListingData:
     
     return ListingData(*data_tuple)
 
+def parse_transaction_tuple(data_tuple: tuple) -> TransactionData:
+    if not isinstance(data_tuple, tuple) or len(data_tuple) != 7:
+        return None
+    return TransactionData(*data_tuple)
 # =============================================================================
 # WORKER TẢI ẢNH (GỌI QUA BACKEND FLASK)
 # =============================================================================
@@ -113,7 +126,7 @@ class ImageDownloader(QObject):
 class LandListItemWidget(QWidget): # SỬA LỖI #1
     sell_requested = Signal(int)
 
-    def __init__(self, land_data: LandParcelData, parent=None):
+    def __init__(self, land_data: LandParcelData, is_selling: bool = False, parent=None):
         super().__init__(parent)
         self.land_data = land_data
 
@@ -133,9 +146,17 @@ class LandListItemWidget(QWidget): # SỬA LỖI #1
         main_layout.addLayout(text_layout)
         main_layout.addStretch()
 
-        self.sell_button = QPushButton("Bán")
-        self.sell_button.setStyleSheet("background-color: #4CAF50; color: white;")
-        self.sell_button.clicked.connect(lambda: self.sell_requested.emit(self.land_data.id))
+        self.sell_button = QPushButton()
+        if is_selling:
+            self.sell_button.setText("Đang đăng bán")
+            self.sell_button.setEnabled(False) # Vô hiệu hóa nút
+            # Có thể đổi màu để dễ nhận biết
+            self.sell_button.setStyleSheet("background-color: #FFC107; color: black;") 
+        else:
+            self.sell_button.setText("Bán")
+            self.sell_button.setEnabled(True)
+            self.sell_button.setStyleSheet("background-color: #4CAF50; color: white;")
+            self.sell_button.clicked.connect(lambda: self.sell_requested.emit(self.land_data.id))
         
         self.view_button = QPushButton("Xem Chi tiết")
         self.view_button.clicked.connect(self.show_details)
@@ -199,7 +220,7 @@ class ListingCardWidget(QFrame):
         cid = image_ipfs_uri.replace("ipfs://", "")
         
         # Tạo URL để gọi đến backend Flask
-        backend_image_url = f"{FLASK_BACKEND_URL}/image/{cid}"
+        backend_image_url = f"{IPFS_URL_VIEWER}{cid}"
         # ============================
         
         # Phần code tạo luồng và worker còn lại giữ nguyên
@@ -420,10 +441,133 @@ class MarketplaceTab(QWidget):
                     self.load_listings()
         except Exception as e:
             QMessageBox.critical(self, "Lỗi", f"Không thể hiển thị chi tiết: {e}")
+
+class MyTransactionsTab(QWidget):
+    def __init__(self, user_account, marketplace_contract, land_registry_contract, land_nft_contract):
+        super().__init__()
+        self.user_account = user_account
+        self.marketplace_contract = marketplace_contract
+        self.land_registry_contract = land_registry_contract
+        self.land_nft_contract = land_nft_contract # Dùng để lấy thông tin bổ sung nếu cần
+
+        layout = QVBoxLayout(self)
+
+        # Header
+        header_layout = QHBoxLayout()
+        title = QLabel("Lịch sử Giao dịch & Đơn mua")
+        title.setStyleSheet("font-size: 18px; font-weight: bold;")
+        
+        self.refresh_button = QPushButton("Làm mới")
+        self.refresh_button.clicked.connect(self.populate_transactions)
+        
+        header_layout.addWidget(title)
+        header_layout.addStretch()
+        header_layout.addWidget(self.refresh_button)
+        layout.addLayout(header_layout)
+
+        # Bảng hiển thị
+        self.table = QTableWidget()
+        self.table.setColumnCount(6)
+        self.table.setHorizontalHeaderLabels([
+            "ID GD", "Địa chỉ Đất", "Giá (ETH)", "Trạng thái", "Ngày tạo", "Hành động"
+        ])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        layout.addWidget(self.table)
+
+        self.populate_transactions()
+
+    def populate_transactions(self):
+        self.table.setRowCount(0)
+        try:
+            next_tx_id = self.marketplace_contract.next_tx_id
+            
+            # Duyệt ngược để thấy giao dịch mới nhất trước
+            for i in range(next_tx_id - 1, 0, -1):
+                tx_tuple = self.marketplace_contract.transactions(i)
+                tx_data = parse_transaction_tuple(tx_tuple)
+                
+                if tx_data and tx_data.buyer_address.lower() == self.user_account.address.lower():
+                    self.add_transaction_row(tx_data)
+                    
+        except Exception as e:
+            print(f"Lỗi tải giao dịch: {e}")
+
+    def add_transaction_row(self, tx_data: TransactionData):
+        row = self.table.rowCount()
+        self.table.insertRow(row)
+
+        # 1. Lấy thông tin đất để hiển thị cho đẹp (thay vì chỉ hiện ID)
+        land_address_display = "Đang tải..."
+        try:
+            listing_tuple = self.marketplace_contract.listings(tx_data.listing_id)
+            listing_data = parse_listing_tuple(listing_tuple)
+            if listing_data:
+                land_tuple = self.land_registry_contract.land_parcels(listing_data.token_id)
+                land_data = parse_land_parcel_tuple(land_tuple)
+                if land_data:
+                    land_address_display = f"#{listing_data.token_id} - {land_data.land_address}"
+        except:
+            land_address_display = f"Listing #{tx_data.listing_id}"
+
+        # 2. Xử lý hiển thị trạng thái
+        status_text = {
+            0: "Đang chờ duyệt",
+            1: "Thành công",
+            2: "Bị từ chối",
+            3: "Đã hủy"
+        }.get(tx_data.status, "Không rõ")
+        
+        # Màu sắc trạng thái
+        status_item = QTableWidgetItem(status_text)
+        if tx_data.status == 0:
+            status_item.setForeground(Qt.blue)
+            status_item.setFont(QFont("Arial", 9, QFont.Bold))
+        elif tx_data.status == 1:
+            status_item.setForeground(Qt.green)
+        elif tx_data.status == 2 or tx_data.status == 3:
+            status_item.setForeground(Qt.red)
+
+        # 3. Điền dữ liệu vào cột
+        self.table.setItem(row, 0, QTableWidgetItem(str(tx_data.tx_id)))
+        self.table.setItem(row, 1, QTableWidgetItem(land_address_display))
+        self.table.setItem(row, 2, QTableWidgetItem(f"{tx_data.amount / 10**18:.4f}"))
+        self.table.setItem(row, 3, status_item)
+        
+        # Convert timestamp (nếu cần, ở đây hiển thị raw hoặc format lại)
+        import datetime
+        date_str = datetime.datetime.fromtimestamp(tx_data.created_at).strftime('%Y-%m-%d %H:%M')
+        self.table.setItem(row, 4, QTableWidgetItem(date_str))
+
+        # 4. Cột Hành động (Nút Hủy)
+        if tx_data.status == 0: # Chỉ hiển thị nút hủy nếu đang chờ (Pending)
+            cancel_btn = QPushButton("Hủy Giao dịch")
+            cancel_btn.setStyleSheet("background-color: #ff9800; color: white; font-weight: bold;")
+            cancel_btn.clicked.connect(lambda: self.handle_cancel(tx_data.tx_id))
+            self.table.setCellWidget(row, 5, cancel_btn)
+        else:
+            self.table.setItem(row, 5, QTableWidgetItem("-"))
+
+    def handle_cancel(self, tx_id):
+        reply = QMessageBox.question(
+            self, "Xác nhận Hủy",
+            "Bạn có chắc chắn muốn hủy giao dịch này?\n"
+            "Bạn sẽ nhận lại tiền cọc nhưng sẽ bị trừ một khoản phí phạt nhỏ.",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            try:
+                receipt = self.marketplace_contract.buyer_cancel(tx_id, sender=self.user_account)
+                
+                QMessageBox.information(self, "Đã hủy", f"Giao dịch #{tx_id} đã được hủy thành công.\nTiền cọc (sau khi trừ phí) đã được hoàn lại.")
+                self.populate_transactions() # Làm mới bảng
+            except Exception as e:
+                QMessageBox.critical(self, "Lỗi", f"Không thể hủy giao dịch: {e}")
 # =============================================================================
 # TAB CỦA USER: ĐẤT CỦA TÔI (MY ACCOUNT)
 # =============================================================================
-class MyAccountTab(QWidget):
+class MyLandTab(QWidget):
     def __init__(self, user_account, land_registry_contract, land_nft_contract, marketplace_contract):
         super().__init__()
         self.user_account = user_account
@@ -449,87 +593,91 @@ class MyAccountTab(QWidget):
 
     def populate_my_lands(self):
         self.land_list_widget.clear()
-
         try:
-            # Lấy danh sách ID đất mà người dùng sở hữu từ LandRegistry
             owned_land_ids = self.land_registry_contract.owner_to_lands(self.user_account.address)
-
-            if not owned_land_ids:
-                self.land_list_widget.addItem("Bạn chưa sở hữu mảnh đất nào.")
-                return
+            
+            # Lấy danh sách tất cả các listing đang active để đối chiếu
+            # (Lưu ý: Cách này có thể chậm nếu có quá nhiều listing. 
+            # Trong thực tế nên dùng The Graph hoặc lưu cache listing theo owner)
+            active_listing_tokens = set()
+            next_listing_id = self.marketplace_contract.next_listing_id
+            for i in range(1, next_listing_id):
+                l_tuple = self.marketplace_contract.listings(i)
+                l_data = parse_listing_tuple(l_tuple)
+                if l_data and l_data.status == 0: # Active
+                    active_listing_tokens.add(l_data.token_id)
 
             for land_id in owned_land_ids:
-                # Lấy thông tin chi tiết cho từng mảnh đất
                 land_tuple = self.land_registry_contract.land_parcels(land_id)
                 land_data = parse_land_parcel_tuple(land_tuple)
                 
                 if land_data and land_data.status == 1:
-                    # Truyền đối tượng dataclass vào widget
-                    item_widget = LandListItemWidget(land_data)
+                    # Kiểm tra xem đất này có đang được bán không
+                    is_selling = land_id in active_listing_tokens
                     
+                    # Truyền trạng thái is_selling vào widget
+                    item_widget = LandListItemWidget(land_data, is_selling)
                     item_widget.sell_requested.connect(self.handle_sell_request)
-                    # Tạo một mục trong QListWidget
-                    list_item = QListWidgetItem(self.land_list_widget)
-                    # Đặt kích thước cho mục để vừa với widget tùy chỉnh
-                    list_item.setSizeHint(item_widget.sizeHint())
                     
-                    # Thêm mục vào danh sách
+                    list_item = QListWidgetItem(self.land_list_widget)
+                    list_item.setSizeHint(item_widget.sizeHint())
                     self.land_list_widget.addItem(list_item)
-                    # Gắn widget tùy chỉnh vào mục đó
                     self.land_list_widget.setItemWidget(list_item, item_widget)
         except Exception as e:
-            QMessageBox.critical(self, "Lỗi Blockchain", f"Không thể tải dữ liệu tài sản của bạn: {e}")
+            QMessageBox.critical(self, "Lỗi", f"Lỗi tải tài sản: {e}")
+            
     def handle_sell_request(self, token_id):
         """Hàm xử lý đầy đủ luồng đăng bán, tự động lấy CCCD."""
         print(f"Bắt đầu quy trình bán cho token #{token_id}")
         
         try:
-            # === BƯỚC 1: KIỂM TRA PHÊ DUYỆT (APPROVAL) ===
-            print(" -> Bước 1: Kiểm tra quyền (approval)...")
-            is_approved = self.land_nft_contract.isApprovedForAll(
-                self.user_account.address,
-                self.marketplace_contract.address
-            )
-            
-            if not is_approved:
-                reply = QMessageBox.question(
-                    self,
-                    "Yêu cầu Phê duyệt",
-                    "Bạn cần cấp quyền cho Sàn giao dịch để quản lý NFT của bạn trước khi có thể đăng bán. "
-                    "Bạn có muốn tiếp tục không?",
-                    QMessageBox.Yes | QMessageBox.No
-                )
-                if reply == QMessageBox.No:
-                    return # Người dùng từ chối
-                
-                approval_receipt = self.land_nft_contract.setApprovalForAll(
-                    self.marketplace_contract.address, True, sender=self.user_account
-                )
-                QMessageBox.information(self, "Phê duyệt Thành công", f"Đã cấp quyền thành công!\nTx: {getattr(approval_receipt, 'txn_hash', 'N/A')}\n\nBây giờ bạn có thể nhấn 'Bán' lại.")
-                return # Dừng lại để người dùng nhấn bán lại, đảm bảo luồng rõ ràng
-
-            # === BƯỚC 2: CHỈ HỎI GIÁ BÁN ===
-            print(" -> Bước 2: Mở dialog để lấy giá bán...")
+            # === BƯỚC 1: HỎI GIÁ ===
             dialog = SellDialog(token_id, self)
             if dialog.exec(): # Trả về True nếu người dùng nhấn OK
                 price = dialog.get_price()
-                
+                price_in_eth = price / 10**18
                 if price is None:
                     QMessageBox.warning(self, "Thông tin không hợp lệ", "Vui lòng nhập giá bán hợp lệ.")
                     return
-                
-                # === BƯỚC 2.5: TỰ ĐỘNG LẤY CCCD TỪ LANDREGISTRY ===
-                print(" -> Lấy CCCD từ LandRegistry...")
+                # === BƯỚC 2: XÁC NHẬN VÀ ỦY QUYỀN ===
+                approved_addr = self.land_nft_contract.getApproved(token_id)
+                marketplace_addr = self.marketplace_contract.address
+
+                if approved_addr.lower() != marketplace_addr.lower():
+                    reply = QMessageBox.question(
+                        self, "Xác nhận Bán và Ủy quyền",
+                        f"Bạn đang đăng bán Bất động sản #{token_id} với giá {price} Wei ({price_in_eth} ETH). \n\n"
+                        "Để thực hiện đăng bán, bạn cần đồng ý ủy quyền cho Sàn giao dịch được phép chuyển nhượng mảnh đất này khi có người mua. \n\n",
+                        QMessageBox.Yes | QMessageBox.No
+                    )
+                    if reply == QMessageBox.No:
+                        return
+                    
+                    # Thực hiện Approve
+                    print(f" -> Gửi giao dịch approve cho token #{token_id}...")
+                    self.setCursor(Qt.WaitCursor)
+                    approve_receipt = self.land_nft_contract.approve(
+                        marketplace_addr,
+                        token_id,
+                        sender=self.user_account
+                    )
+                    self.unsetCursor()
+                    print(" -> Approve thành công.")
+
+                # === BƯỚC 2: TỰ ĐỘNG LẤY CCCD TỪ LANDREGISTRY ===
+                self.setCursor(Qt.WaitCursor)
                 land_tuple = self.land_registry_contract.land_parcels(token_id)
                 land_parcel_data = parse_land_parcel_tuple(land_tuple)
                 
                 if not land_parcel_data:
-                    QMessageBox.critical(self, "Lỗi Dữ liệu", "Không tìm thấy dữ liệu cho mảnh đất này.")
+                    self.unsetCursor()
+                    QMessageBox.critical(self, "Lỗi", "Không tìm thấy dữ liệu đất.")
                     return
                     
                 seller_cccd = land_parcel_data.owner_cccd
                 
                 if not seller_cccd:
+                    self.unsetCursor()
                     QMessageBox.critical(self, "Lỗi Dữ liệu", "Không tìm thấy thông tin CCCD cho mảnh đất này trong Registry.")
                     return
 
@@ -544,7 +692,8 @@ class MyAccountTab(QWidget):
                     sender=self.user_account,
                     value=listing_fee
                 )
-                
+                self.unsetCursor()
+
                 QMessageBox.information(self, "Thành công", f"Đã đăng bán bất động sản #{token_id} thành công!\nTx: {getattr(receipt, 'txn_hash', 'N/A')}")
                 # Làm mới danh sách để cập nhật trạng thái (ví dụ: hiển thị "Đang bán")
                 self.populate_my_lands() 
@@ -1321,13 +1470,13 @@ class MainWindow(QMainWindow):
 
         # Admin Tabs
         self.land_registry_tab = LandRegistryTab(admin_account, land_registry_contract)
-        self.transaction_tab = AdminTransactionTab(admin_account, marketplace_contract, land_nft_contract, land_registry_contract)
+        self.admin_transaction_tab = AdminTransactionTab(admin_account, marketplace_contract, land_nft_contract, land_registry_contract)
         self.config_tab = SystemConfigTab(admin_account, marketplace_contract)
         self.settings_tab = SettingsTab(admin_account.address, self)
         
 
         tabs.addTab(self.land_registry_tab, "Land Registration")
-        tabs.addTab(self.transaction_tab, "Transaction")
+        tabs.addTab(self.admin_transaction_tab, "Transaction")
         tabs.addTab(self.config_tab, "System Config")
         tabs.addTab(self.settings_tab, "Setting")
         
@@ -1362,14 +1511,15 @@ class MainWindow(QMainWindow):
 
         self.register_tab = RegisterLandTab(user_account, land_registry_contract)
         self.marketplace_tab = MarketplaceTab(user_account, marketplace_contract, land_registry_contract, land_nft_contract)
-        self.my_account_tab = MyAccountTab(user_account, land_registry_contract, land_nft_contract, marketplace_contract)
+        self.my_account_tab = MyLandTab(user_account, land_registry_contract, land_nft_contract, marketplace_contract)
         self.settings_tab = SettingsTab(user_account.address, self)
+        self.transaction_history_tab = MyTransactionsTab(user_account, marketplace_contract, land_registry_contract, land_nft_contract)
         
         # Customer Tabs
-        tabs.addTab(QLabel(f"Welcome User: {user_account.address}"), "Sàn Giao Dịch")
         tabs.addTab(self.register_tab, "Register Land")
         tabs.addTab(self.marketplace_tab, "Marketplace")
-        tabs.addTab(self.my_account_tab, "My Account")
+        tabs.addTab(self.my_account_tab, "My Land")
+        tabs.addTab(self.transaction_history_tab, "Transaction History")
         tabs.addTab(self.settings_tab, "Setting")
 
         container_layout = QVBoxLayout(container)

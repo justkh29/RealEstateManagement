@@ -179,12 +179,23 @@ class MockLandNFT:
         self.name = "Mock Land NFT"
         self.symbol = "MLND"
         self.minter = MOCK_LAND_REGISTRY_ADDRESS
+        self._approvals = {}
         self._operator_approvals = {}
 
     # Public HashMap Getter
     def ownerOf(self, token_id):
         # ownerOf không phải HashMap, nó là hàm view trả về address
         return self._registry._land_to_owner_data.get(token_id, "0x" + "0"*40)
+
+    def approve(self, to, token_id, sender):
+        print(f"[MOCK NFT] User {sender.address} approved {to} for token #{token_id}")
+        # Lưu trữ approval cho token cụ thể
+        self._approvals[token_id] = to
+        return {"txn_hash": f"0xmock_approve_token_{token_id}"}
+
+    def getApproved(self, token_id):
+        # Trả về địa chỉ được approve, hoặc 0x0 nếu không có
+        return self._approvals.get(token_id, "0x" + "0"*40)
 
     # Functions
     def isApprovedForAll(self, owner, operator):
