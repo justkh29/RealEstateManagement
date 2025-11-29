@@ -13,7 +13,7 @@ from mock_blockchain import (
     MOCK_ADMIN_ADDRESS, MOCK_USER_A_ADDRESS, MOCK_USER_B_ADDRESS
 )
 from ipfs_utils import upload_file_to_ipfs, upload_json_to_ipfs, FLASK_BACKEND_URL, IPFS_URL_VIEWER
-
+from crypto_utils import encrypt_data, decrypt_data, save_land_info, get_real_cccd
 
 from dataclasses import dataclass
 
@@ -123,7 +123,7 @@ class ImageDownloader(QObject):
 # =============================================================================
 # WIDGET TÙY CHỈNH CHO MỖI MỤC TRONG DANH SÁCH ĐẤT
 # =============================================================================
-class LandListItemWidget(QWidget): # SỬA LỖI #1
+class LandListItemWidget(QWidget):
     sell_requested = Signal(int)
 
     def __init__(self, land_data: LandParcelData, is_selling: bool = False, parent=None):
@@ -168,9 +168,14 @@ class LandListItemWidget(QWidget): # SỬA LỖI #1
 
     def show_details(self):
         # SỬA: Dùng `land_data.attribute`
+        real_cccd = get_real_cccd(self.land_data.land_address)
+        if real_cccd is None:
+            display_cccd = f"{self.land_data.owner_cccd[:15]}... [Đã mã hóa]"
+        else:
+            display_cccd = f"{real_cccd} (Đã xác minh cục bộ)"
         detail_text = (
             f"Thông tin chi tiết Thửa Đất #{self.land_data.id}\n\n"
-            f"Chủ sở hữu (CCCD): {self.land_data.owner_cccd}\n"
+            f"Chủ sở hữu (CCCD): {display_cccd}\n"
             f"Địa chỉ: {self.land_data.land_address}\n"
             f"Diện tích: {self.land_data.area} m²\n"
             f"Link PDF: {self.land_data.pdf_uri}\n"
@@ -254,7 +259,7 @@ class ListingDetailDialog(QDialog):
         self.user_account = user_account
         self.listing_data = listing_data
         self.marketplace_contract = marketplace_contract
-        
+        self.land_data = land_data
         self.setWindowTitle(f"Chi tiết Bất động sản #{listing_data.token_id}")
         self.setMinimumWidth(500)
         
@@ -313,13 +318,16 @@ class ListingDetailDialog(QDialog):
             return
 
         try:
+            print("Đang mã hóa thông tin người mua...")
+            buyer_cccd_encrypted = encrypt_data(buyer_cccd)
             receipt = self.marketplace_contract.initiate_transaction(
                 self.listing_data.listing_id,
-                buyer_cccd,
+                buyer_cccd_encrypted,
                 sender=self.user_account,
                 value=price_wei
             )
             QMessageBox.information(self, "Thành công", f"Đã gửi yêu cầu mua thành công!\nGiao dịch của bạn đang chờ Admin duyệt.\nTx: {getattr(receipt, 'txn_hash', 'N/A')}")
+            save_land_info(self.land_data.land_address, buyer_cccd)
             self.accept() # Đóng cửa sổ
         except Exception as e:
             QMessageBox.critical(self, "Lỗi Giao dịch", f"Gửi yêu cầu mua thất bại: {e}")
@@ -846,20 +854,22 @@ class RegisterLandTab(QWidget): # Tạo một class riêng cho tab này
         # Lấy dữ liệu từ các ô input
         land_address = self.land_address_input.text()
         area = int(self.area_input.text())
-        cccd = self.cccd_input.text()
+        cccd_raw = self.cccd_input.text()
         pdf_uri = self.pdf_uri_input.text()
         image_uri = self.image_uri_input.text()
 
-        if not all([land_address, area, cccd, pdf_uri, image_uri]):
+        if not all([land_address, area, cccd_raw, pdf_uri, image_uri]):
             QMessageBox.warning(self, "Thiếu thông tin", "Vui lòng điền đầy đủ tất cả các trường.")
             return
 
         try:
+            cccd_encrypted = encrypt_data(cccd_raw)
             receipt = self.land_registry_contract.register_land(
-                land_address, area, cccd, pdf_uri, image_uri,
+                land_address, area, cccd_encrypted, pdf_uri, image_uri,
                 sender=self.user_account
             )
             QMessageBox.information(self, "Thành công", f"Đã gửi hồ sơ đăng ký thành công!\nTx: {getattr(receipt, 'txn_hash', 'N/A')}")
+            save_land_info(land_address, cccd_raw)
             # Xóa các ô input sau khi thành công
             self._clear_form()
             self.populate_history() 
@@ -1012,10 +1022,12 @@ class LandDetailDialog(QDialog):
         layout = QVBoxLayout(self)
         form_layout = QFormLayout()
 
+        cccd = decrypt_data(self.land_data.owner_cccd)
+
         # <<< THAY ĐỔI: Truy cập dữ liệu bằng thuộc tính (attribute) >>>
         form_layout.addRow("ID Hồ sơ:", QLabel(str(land_id)))
         form_layout.addRow("Địa chỉ Ví Đăng ký:", QLabel(land_owner))
-        form_layout.addRow("Số CCCD:", QLabel(self.land_data.owner_cccd))
+        form_layout.addRow("Số CCCD:", QLabel(cccd))
         form_layout.addRow("Địa chỉ Đất:", QLabel(self.land_data.land_address))
         form_layout.addRow("Diện tích (m2):", QLabel(str(self.land_data.area)))
         
@@ -1137,7 +1149,7 @@ class AdminTransactionTab(QWidget):
             for row, tx_tuple in enumerate(pending_txs):
                 tx_id = tx_tuple[0]
                 listing_id = tx_tuple[1]
-                buyer_cccd = tx_tuple[2]
+                buyer_cccd_encrypted = tx_tuple[2]
                 buyer_address = tx_tuple[3]
                 amount_wei = tx_tuple[4]
                 
@@ -1145,6 +1157,7 @@ class AdminTransactionTab(QWidget):
                 listing_tuple = self.marketplace_contract.listings(listing_id)
                 listing_data = parse_listing_tuple(listing_tuple)
                 
+                buyer_cccd = decrypt_data(buyer_cccd_encrypted)
                 token_id = listing_data.token_id
                 seller_address = self.land_nft_contract.ownerOf(token_id)
                 

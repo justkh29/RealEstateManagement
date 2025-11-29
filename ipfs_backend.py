@@ -6,7 +6,7 @@ import io
 app = Flask(__name__)
 
 # CẤU HÌNH IP
-IPFS_HOST = "192.168.0.160"
+IPFS_HOST = "192.168.0.140"
 IPFS_API_PORT = "5001"
 IPFS_API_URL = f"http://{IPFS_HOST}:{IPFS_API_PORT}/api/v0"
 
@@ -111,4 +111,4 @@ def view_file(cid):
 
 if __name__ == "__main__":
     # Chạy host 0.0.0.0 để các máy khác trong mạng LAN truy cập được
-    app.run(host="192.168.0.160", port=8000, debug=True)
+    app.run(host=IPFS_HOST, port=8000, debug=True)

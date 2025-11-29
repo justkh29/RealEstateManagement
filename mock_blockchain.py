@@ -1,6 +1,6 @@
 # file: mock_blockchain.py (Phiên bản "Mô phỏng chính xác" - trả về Tuples)
 import json
-
+from crypto_utils import encrypt_data, decrypt_data
 # =============================================================================
 # CÁC ĐỊA CHỈ VÍ MẪU (Không đổi)
 # =============================================================================
@@ -26,16 +26,20 @@ class MockLandRegistry:
         self.admin = MOCK_ADMIN_ADDRESS
         self.land_nft = MOCK_LAND_NFT_ADDRESS
 
-        
+        cccd_a = encrypt_data('079011111111')
+        cccd_b = encrypt_data('079022222222')
+        cccd_c = encrypt_data('079033333333')
+        cccd_d = encrypt_data('079044444444')
+
         # Lưu trữ dữ liệu dưới dạng tuple, giống hệt struct
         self._land_parcels_data = { # id, address, area, cccd, status, pdf, image
-            1: (1, '123 Đường A, Quận 1', 100, '079011111111', 1, 'ipfs://QmPDF1...', 'ipfs://QmImage1...'),
-            2: (2, '456 Đường B, Quận 3', 150, '079011111111', 1, 'ipfs://QmPDF2...', 'ipfs://QmImage2...'),
-            3: (3, '789 Đường C, Quận 5', 120, '079022222222', 0, 'ipfs://QmPDF3...', 'ipfs://QmImage3...'),
-            4: (4, '101 Đường D, Quận 7', 200, '079022222222', 1, 'ipfs://QmPDF4...', 'ipfs://QmTD1Tga9tqGJBzk16U7CN5noumnbJTHgkWvn9EpkUfAe4'),
-            5: (5, '212 Đường E, Bình Thạnh', 80, '079022222222', 2, 'ipfs://QmPDF5...', 'ipfs://QmImage5...'),
-            6: (6, '333 Đường F, TP. Thủ Đức', 180, '079033333333', 0, 'ipfs://QmPDF6...', 'ipfs://QmImage6...'), # Đang chờ
-            7: (7, '444 Đường G, Quận 12', 95, '079044444444', 0, 'ipfs://QmPDF7...', 'ipfs://QmImage7...'), # Đang chờ
+            1: (1, '123 Đường A, Quận 1', 100, cccd_a, 0, 'ipfs://QmPDF1...', 'ipfs://QmImage1...'),
+            2: (2, '456 Đường B, Quận 3', 150, cccd_a, 1, 'ipfs://QmPDF2...', 'ipfs://QmImage2...'),
+            3: (3, '789 Đường C, Quận 5', 120, cccd_b, 0, 'ipfs://QmPDF3...', 'ipfs://QmImage3...'),
+            4: (4, '101 Đường D, Quận 7', 200, cccd_b, 1, 'ipfs://QmPDF4...', 'ipfs://QmTD1Tga9tqGJBzk16U7CN5noumnbJTHgkWvn9EpkUfAe4'),
+            5: (5, '212 Đường E, Bình Thạnh', 80, cccd_b, 2, 'ipfs://QmPDF5...', 'ipfs://QmImage5...'),
+            6: (6, '333 Đường F, TP. Thủ Đức', 180, cccd_c, 0, 'ipfs://QmPDF6...', 'ipfs://QmImage6...'), 
+            7: (7, '444 Đường G, Quận 12', 95, cccd_d, 0, 'ipfs://QmPDF7...', 'ipfs://QmImage7...'), 
         }
         self._land_to_owner_data = {
             1: MOCK_USER_A_ADDRESS, 2: MOCK_USER_A_ADDRESS, 3: MOCK_USER_B_ADDRESS,
@@ -46,10 +50,10 @@ class MockLandRegistry:
             MOCK_USER_A_ADDRESS: [1, 2, 6], MOCK_USER_B_ADDRESS: [3, 4, 5, 7]
         }
         self._lands_by_cccd_data = {
-            '079011111111': [1, 2],
-            '079022222222': [3, 4, 5],
-            '079033333333': [6],
-            '079044444444': [7],
+            cccd_a: [1, 2],
+            cccd_b: [3, 4, 5],
+            cccd_c: [6],
+            cccd_d: [7],
         }
 
     # Public HashMap Getters (TRẢ VỀ TUPLE)
@@ -279,9 +283,14 @@ class MockMarketplace:
         self._escrow_balances = {} # Sẽ lưu tiền ký quỹ của người mua
 
         # Dữ liệu niêm yết mẫu dưới dạng tuple
-        self._listings_data = { # listing_id, token_id, seller_cccd, price, status, created_at
-            1: (1, 2, '079011111111', 10**18, 1, 1672531200),
-            2: (2, 4, '079022222222', int(2.5 * 10**18), 0, 1672617600),
+        # Mã hóa CCCD cho dữ liệu mẫu
+        cccd_a = encrypt_data('079011111111')
+        cccd_b = encrypt_data('079022222222')
+
+        self._listings_data = { 
+            # listing_id, token_id, seller_cccd (ENCRYPTED), price, status, created_at
+            1: (1, 2, cccd_a, 10**18, 0, 1672531200),
+            2: (2, 4, cccd_b, int(2.5 * 10**18), 0, 1672617600),
         }
 
         # tx_id, listing_id, buyer_cccd, buyer_addr, amount, status, created_at

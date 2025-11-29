@@ -1,12 +1,14 @@
 # file: crypto_utils.py
 import os
 import base64
+import json
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 
 # Tên file khóa
 PRIVATE_KEY_FILE = "admin_private_key.pem" # CHỈ CÓ TRÊN MÁY ADMIN
 PUBLIC_KEY_FILE = "admin_public_key.pem"   # CÓ TRÊN TẤT CẢ MÁY
+DATA_FILE = "user_local_data.json"
 
 def generate_keys():
     """Tạo cặp khóa mới (Chỉ chạy 1 lần trên máy Admin)."""
@@ -90,3 +92,31 @@ def decrypt_data(encrypted_message_b64: str) -> str:
     except Exception as e:
         # Nếu giải mã thất bại (do data rác hoặc sai khóa)
         return "[Không thể giải mã]"
+
+def load_local_data():
+    if not os.path.exists(DATA_FILE):
+        return {}
+    try:
+        with open(DATA_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except:
+        return {}
+
+def save_local_data(data):
+    with open(DATA_FILE, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=4, ensure_ascii=False)
+
+def save_land_info(land_address_str, real_cccd):
+    """
+    Lưu mapping: Địa chỉ đất -> CCCD thật.
+    Ta dùng địa chỉ đất làm key vì lúc đăng ký chưa biết TokenID.
+    """
+    data = load_local_data()
+    # Key là địa chỉ đất (viết thường để chuẩn hóa)
+    data[land_address_str.strip().lower()] = real_cccd
+    save_local_data(data)
+
+def get_real_cccd(land_address_str):
+    """Lấy CCCD thật dựa trên địa chỉ đất."""
+    data = load_local_data()
+    return data.get(land_address_str.strip().lower())
