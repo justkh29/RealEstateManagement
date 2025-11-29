@@ -8,24 +8,24 @@ interface ILandNFT:
     def isApprovedForAll(_owner: address, _operator: address) -> bool: view
     def getApproved(_token_id: uint256) -> address: view
     def transferFrom(_from: address, _to: address, _token_id: uint256): nonpayable
-    def transferWithCCCD(_from: address, _to: address, _token_id: uint256, _new_cccd: String[20]): nonpayable
+    def transferWithCCCD(_from: address, _to: address, _token_id: uint256, _new_cccd: String[512]): nonpayable
 
 event ListingCreated:
     listing_id: indexed(uint256)
     token_id: uint256
-    seller_cccd: String[20]
+    seller_cccd: String[512]
     price: uint256
 
 event TransactionInitiated:
     tx_id: indexed(uint256)
     listing_id: uint256
-    buyer_cccd: String[20]
+    buyer_cccd: String[512]
     amount: uint256
 
 event TransactionApproved:
     tx_id: indexed(uint256)
-    buyer_cccd: String[20]
-    seller_cccd: String[20]
+    buyer_cccd: String[512]
+    seller_cccd: String[512]
     amount: uint256
 
 event TransactionRejected:
@@ -44,7 +44,7 @@ next_tx_id: public(uint256)
 struct Listing:
     listing_id: uint256
     token_id: uint256
-    seller_cccd: String[20]
+    seller_cccd: String[512]
     price: uint256
     status: uint8  # 0: Active, 1: InTransaction, 2: Completed
     created_at: uint256
@@ -52,7 +52,7 @@ struct Listing:
 struct Transaction:
     tx_id: uint256
     listing_id: uint256
-    buyer_cccd: String[20]
+    buyer_cccd: String[512]
     buyer_address: address
     amount: uint256
     status: uint8  # 0: Pending, 1: Approved, 2: Rejected, 3: Cancelled
@@ -60,8 +60,8 @@ struct Transaction:
 
 listings: public(HashMap[uint256, Listing])
 transactions: public(HashMap[uint256, Transaction])
-escrow_balances: public(HashMap[address, uint256]) # Giu nguyen de theo doi tien ky quy
-collected_fees: public(uint256) # BIẾN MỚI: Theo dõi tổng phí thu được
+escrow_balances: public(HashMap[address, uint256]) 
+collected_fees: public(uint256) 
 
 @deploy
 def __init__(_land_nft: address, _listing_fee: uint256, _cancel_penalty: uint256):
@@ -74,7 +74,7 @@ def __init__(_land_nft: address, _listing_fee: uint256, _cancel_penalty: uint256
 
 @payable
 @external
-def create_listing(_token_id: uint256, _seller_cccd: String[20], _price: uint256):
+def create_listing(_token_id: uint256, _seller_cccd: String[512], _price: uint256):
     assert msg.value >= self.listing_fee, "Listing fee required"
     
     # Hoan lai phan tien thua
@@ -117,7 +117,7 @@ def create_listing(_token_id: uint256, _seller_cccd: String[20], _price: uint256
 
 @payable
 @external
-def initiate_transaction(_listing_id: uint256, _buyer_cccd: String[20]):
+def initiate_transaction(_listing_id: uint256, _buyer_cccd: String[512]):
     listing: Listing = self.listings[_listing_id]
     assert listing.status == 0, "Listing not active"
     assert msg.value == listing.price, "Incorrect deposit amount"

@@ -3,7 +3,7 @@
 
 # ===================== INTERFACE AND EVENTS =====================
 interface ILandRegistry:
-    def update_ownership(token_id: uint256, new_owner: address, new_cccd: String[20]): nonpayable
+    def update_ownership(token_id: uint256, new_owner: address, new_cccd: String[512]): nonpayable
     
 event Transfer:
     _from: indexed(address)
@@ -22,14 +22,14 @@ event ApprovalForAll:
 
 event CCCDUpdated:
     token_id: indexed(uint256)
-    old_cccd: String[20]
-    new_cccd: String[20]
+    old_cccd: String[512]
+    new_cccd: String[512]
 
 # ===================== DATA STRUCTURES =====================
 
 struct LandData:
     token_id: uint256
-    owner_cccd: String[20]
+    owner_cccd: String[512]
 
 # ===================== STATE VARIABLES =====================
 
@@ -69,7 +69,7 @@ def _burn(token_id: uint256):
     self.land_data[token_id] = empty(LandData)
     self.token_approvals[token_id] = empty(address)
     
-    log Transfer(owner, empty(address), token_id)
+    log Transfer(_from=owner, _to=empty(address), _tokenId=token_id)
 
 
 @internal
@@ -105,7 +105,7 @@ def set_minter(_minter: address):
     self.minter = _minter
 
 @external
-def mint(to: address, token_id: uint256, owner_cccd: String[20], metadata_uri: String[128]) -> bool:
+def mint(to: address, token_id: uint256, owner_cccd: String[512], metadata_uri: String[128]) -> bool:
     assert msg.sender == self.minter, "Only minter can mint"
     assert self.owner_of[token_id] == empty(address), "Token ID exists"
     assert to != empty(address), "Invalid recipient"
@@ -129,7 +129,7 @@ def burn(token_id: uint256):
     self._burn(token_id)
 
 @external
-def transferWithCCCD(from_: address, to: address, token_id: uint256, new_cccd: String[20]):
+def transferWithCCCD(from_: address, to: address, token_id: uint256, new_cccd: String[512]):
     assert self._is_approved_or_owner(msg.sender, token_id), "Not owner or approved"
     assert self.owner_of[token_id] == from_, "Invalid owner"
     assert to != empty(address), "Invalid recipient"
@@ -142,7 +142,7 @@ def transferWithCCCD(from_: address, to: address, token_id: uint256, new_cccd: S
 
     # Update CCCD
     old_data: LandData = self.land_data[token_id]
-    old_cccd: String[20] = old_data.owner_cccd
+    old_cccd: String[512] = old_data.owner_cccd
     self.land_data[token_id] = LandData(
         token_id=token_id,
         owner_cccd=new_cccd,
