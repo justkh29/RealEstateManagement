@@ -8,11 +8,11 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import QObject, QThread, Qt, Signal, QRegularExpression, QUrl, Slot
 from PySide6.QtGui import QFont, QRegularExpressionValidator, QDesktopServices, QPixmap
 from ape import accounts, project, networks
-from mock_blockchain import (
+from app_modules.mock_blockchain import (
     MockAccount, MockLandRegistry, MockLandNFT, MockMarketplace,
     MOCK_ADMIN_ADDRESS, MOCK_USER_A_ADDRESS, MOCK_USER_B_ADDRESS
 )
-from ipfs_utils import upload_file_to_ipfs, upload_json_to_ipfs, FLASK_BACKEND_URL
+from app_modules.ipfs_utils import upload_file_to_ipfs, upload_json_to_ipfs, FLASK_BACKEND_URL
 
 
 from dataclasses import dataclass
