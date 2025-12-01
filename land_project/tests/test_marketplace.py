@@ -101,7 +101,7 @@ def test_approve_transaction(marketplace, land_nft, owner, seller, buyer):
     
     # Check transaction status
     transaction = marketplace.get_transaction(1)
-    assert transaction.status == 1  # Approved
+    assert transaction.status == 1, "Transaction still not approved"  # Approved
     
     # Check NFT transferred
     assert land_nft.ownerOf(1) == buyer.address
