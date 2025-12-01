@@ -374,10 +374,8 @@ class MarketplaceTab(QWidget):
         
         scroll_area.setWidget(grid_container)
         
-        # Thêm vùng cuộn vào layout chính
         main_layout.addWidget(scroll_area)
 
-        # Tải dữ liệu lần đầu
         self.load_listings()
 
     def load_listings(self):
@@ -395,8 +393,6 @@ class MarketplaceTab(QWidget):
             next_id = self.marketplace_contract.next_listing_id
             
             row, col = 0, 0
-            # Lấy độ rộng của vùng hiển thị để tính số cột (tùy chỉnh nếu muốn)
-            # Mặc định cố định 3 cột
             max_columns = 3 
 
             for i in range(1, next_id):
@@ -975,11 +971,12 @@ class LandRegistryTab(QWidget):
                 land_tuple = self.land_registry_contract.land_parcels(land_id)
                 land_data = parse_land_parcel_tuple(land_tuple)
                 land_owner = self.land_registry_contract.get_land_owner(land_id)
+                cccd = decrypt_data(land_data.owner_cccd)
 
                 if land_data:
                     self.pending_lands_table.setItem(row, 0, QTableWidgetItem(str(land_id)))
                     self.pending_lands_table.setItem(row, 1, QTableWidgetItem(land_owner))
-                    self.pending_lands_table.setItem(row, 2, QTableWidgetItem(land_data.owner_cccd))
+                    self.pending_lands_table.setItem(row, 2, QTableWidgetItem(cccd))
                     self.pending_lands_table.setItem(row, 3, QTableWidgetItem(land_data.land_address))
                 # Tạo nút "Xem & Xử lý" cho mỗi hàng
                 process_button = QPushButton("Xem & Xử lý")
