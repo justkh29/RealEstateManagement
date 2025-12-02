@@ -21,9 +21,9 @@ from dataclasses import dataclass
 USE_MOCK_DATA = False
 NODE_URL = "http://127.0.0.1:8545"
 
-LAND_NFT_ADDRESS = "0x0E8d3927BD2bC03c9c1C1b176D40aDbe324069D0"       # Ví dụ: 0x5FbDB2315678...
-LAND_REGISTRY_ADDRESS = "0x159a8c4c7C9e5dbCcF655F03aa5E5d576E827dd7"  # Ví dụ: 0xe7f1725E7734...
-MARKETPLACE_ADDRESS = "0xc1Dd70a91AEA6ADAA379ba75081a82A3FF0a656C"    # Ví dụ: 0x9fE46736679d...
+LAND_NFT_ADDRESS = "0x437AAc235f0Ed378AB9CbD5b7C20B1c3B28b573a"       # Ví dụ: 0x5FbDB2315678...
+LAND_REGISTRY_ADDRESS = "0x9FfDa9D1FeDdF35a26D2F68a50Fd600e68696469"  # Ví dụ: 0xe7f1725E7734...
+MARKETPLACE_ADDRESS = "0xa8EFf51482B108A94CB813Af2C59B467Cc5Fa08E"    # Ví dụ: 0x9fE46736679d...
 # =============================================================================
 # DATA CLASSES
 # =============================================================================
@@ -61,20 +61,34 @@ class TransactionData:
 # DATA PARSERS
 # =============================================================================
 
-def parse_land_parcel_tuple(data_tuple: tuple) -> LandParcelData:
-    if not isinstance(data_tuple, tuple) or len(data_tuple) != 7:
-        print(f"Warning: Invalid LandParcel data: {data_tuple}")
+def parse_land_parcel_tuple(data_obj) -> LandParcelData:
+    if not data_obj:
+         return LandParcelData(id=0, land_address="", area=0, owner_cccd="", status=99, pdf_uri="", image_uri="")
+    
+    data_tuple = tuple(data_obj) 
+    
+    if len(data_tuple) != 7:
+        print(f"Warning: Invalid LandParcel data length: {data_tuple}")
         return LandParcelData(id=0, land_address="", area=0, owner_cccd="", status=99, pdf_uri="", image_uri="")
     return LandParcelData(*data_tuple)
 
-def parse_listing_tuple(data_tuple: tuple) -> ListingData:
-    if not isinstance(data_tuple, tuple) or len(data_tuple) != 6:
-        print(f"Warning: Invalid Listing data: {data_tuple}")
+def parse_listing_tuple(data_obj) -> ListingData:
+    if not data_obj:
+        return ListingData(listing_id=0, token_id=0, seller_cccd="", price=0, status=99, created_at=0)
+
+    data_tuple = tuple(data_obj) 
+
+    if len(data_tuple) != 6:
+        print(f"Warning: Invalid Listing data length: {data_tuple}")
         return ListingData(listing_id=0, token_id=0, seller_cccd="", price=0, status=99, created_at=0)
     return ListingData(*data_tuple)
 
-def parse_transaction_tuple(data_tuple: tuple) -> TransactionData:
-    if not isinstance(data_tuple, tuple) or len(data_tuple) != 7:
+def parse_transaction_tuple(data_obj) -> TransactionData:
+    if not data_obj: return None
+    
+    data_tuple = tuple(data_obj) 
+    
+    if len(data_tuple) != 7:
         return None
     return TransactionData(*data_tuple)
 
@@ -471,7 +485,7 @@ class MarketplaceTab(QWidget):
             if widget: widget.setParent(None)
 
         try:
-            next_id = self.marketplace_contract.next_listing_id
+            next_id = self.marketplace_contract.next_listing_id()
             
             row, col = 0, 0
             max_columns = 3 
@@ -560,7 +574,7 @@ class MyTransactionsTab(QWidget):
     def populate_transactions(self):
         self.table.setRowCount(0)
         try:
-            next_tx_id = self.marketplace_contract.next_tx_id
+            next_tx_id = self.marketplace_contract.next_tx_id()
             
             for i in range(next_tx_id - 1, 0, -1):
                 tx_tuple = self.marketplace_contract.transactions(i)
@@ -663,10 +677,10 @@ class MyLandTab(QWidget):
     def populate_my_lands(self):
         self.land_list_widget.clear()
         try:
-            owned_land_ids = self.land_registry_contract.owner_to_lands(self.user_account.address)
+            owned_land_ids = self.land_registry_contract.get_lands_by_owner(self.user_account.address)
             
             active_listing_tokens = set()
-            next_listing_id = self.marketplace_contract.next_listing_id
+            next_listing_id = self.marketplace_contract.next_listing_id()
             for i in range(1, next_listing_id):
                 l_tuple = self.marketplace_contract.listings(i)
                 l_data = parse_listing_tuple(l_tuple)
@@ -741,7 +755,7 @@ class MyLandTab(QWidget):
                     return
 
                 print(f" -> Bước 3: Gửi giao dịch create_listing với CCCD tự động: {seller_cccd}")
-                listing_fee = self.marketplace_contract.listing_fee
+                listing_fee = self.marketplace_contract.listing_fee()
                 
                 receipt = self.marketplace_contract.create_listing(
                     token_id,
@@ -880,7 +894,7 @@ class RegisterLandTab(QWidget):
     def populate_history(self):
         self.history_table.setRowCount(0)
         try:
-            my_land_ids = self.land_registry_contract.owner_to_lands(self.user_account.address)
+            my_land_ids = self.land_registry_contract.get_lands_by_owner(self.user_account)
             
             self.history_table.setRowCount(len(my_land_ids))
             
