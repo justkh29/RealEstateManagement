@@ -1,152 +1,131 @@
 from ape import accounts, project, convert
 
 def main():
-    # 1. KHỞI TẠO TÀI KHOẢN
-    # accounts.test_accounts tự động tạo 10 ví có sẵn ETH trên mạng local
+    # 1. SETUP
     admin = accounts.load("myacc")
     admin.set_autosign(True, passphrase="test123456")
-    
     seller = accounts.load("voter1")
     seller.set_autosign(True, passphrase="test1")
-    
     buyer = accounts.load("voter2")
     buyer.set_autosign(True, passphrase="test2")
 
-    
-    print("-> Đã bơm xong 10-100 ETH cho mỗi tài khoản.")
-    print(f"--- Bắt đầu Deploy với Admin: {admin.address} ---")
-
-    # 2. DEPLOY CONTRACTS
-    # Lưu ý: LandNFT và LandRegistry phụ thuộc lẫn nhau. 
-    # Chiến thuật: Deploy NFT trước với admin làm minter tạm thời, sau đó set lại minter là Registry.
-    
-    # Deploy LandNFT
-    # Tham số: name, symbol, minter (tạm thời là admin)
+    print("--- 1. DEPLOYMENT ---")
     land_nft = project.LandNFT.deploy("VietLand", "VLAND", admin, sender=admin)
-    print(f"1. LandNFT deployed tại: {land_nft.address}")
-
-    # Deploy LandRegistry
-    # Tham số: land_nft_address
     land_registry = project.LandRegistry.deploy(land_nft.address, sender=admin)
-    print(f"2. LandRegistry deployed tại: {land_registry.address}")
-
-    # CẬP NHẬT MINTER CHO NFT
-    # Bây giờ gán quyền minter chính thức cho LandRegistry
+    
+    # Cập nhật minter
     land_nft.set_minter(land_registry.address, sender=admin)
-    print("-> Đã cập nhật Minter của NFT thành LandRegistry")
-
-    # Deploy Marketplace
-    # Tham số: land_nft_address, listing_fee, cancel_penalty
+    
     listing_fee = convert("0.001 ether", int)
-    cancel_penalty = convert("0.005 ether", int)
-    marketplace = project.Marketplace.deploy(
-        land_nft.address, 
-        listing_fee, 
-        cancel_penalty, 
-        sender=admin
-    )
-    print(f"3. Marketplace deployed tại: {marketplace.address}")
-    print("-" * 50)
-
-    # 3. KỊCH BẢN: ĐĂNG KÝ ĐẤT (USER A)
-    print("\n--- Kịch bản 1: Seller đăng ký đất ---")
-    land_address = "123 Nguyen Hue, District 1, HCMC"
-    area = 100
-    cccd_seller = "079012345678"
-    pdf_uri = "ipfs://QmPdf..."
-    img_uri = "ipfs://QmImg..."
-
-    tx = land_registry.register_land(
-        land_address, area, cccd_seller, pdf_uri, img_uri, 
-        sender=seller
-    )
-    # Lấy land_id từ sự kiện (hoặc tính toán, ở đây giả sử là 1 vì là lần đầu)
-    land_id = 1 
-    print(f"Seller đã đăng ký đất. Land ID: {land_id}")
+    cancel_penalty = convert("0.5 ether", int) # Phạt 0.5 ETH cho dễ thấy
+    marketplace = project.Marketplace.deploy(land_nft.address, listing_fee, cancel_penalty, sender=admin)
     
-    # Kiểm tra trạng thái
-    assert land_registry.get_land_status(land_id) == 0 # 0 = Pending
-    print("-> Trạng thái đất: Pending")
+    print("Deployment completed.")
 
-    # 4. KỊCH BẢN: ADMIN DUYỆT ĐẤT
-    print("\n--- Kịch bản 2: Admin duyệt và Mint NFT ---")
-    metadata_uri = "ipfs://QmMetadata..."
+    # ==========================================
+    # SCENARIO A: GIAO DỊCH THÀNH CÔNG (HAPPY PATH)
+    # ==========================================
+    print("\n=== SCENARIO A: MUA BÁN THÀNH CÔNG ===")
     
-    # Admin duyệt
-    land_registry.approve_land(land_id, metadata_uri, sender=admin)
+    # A1. Seller đăng ký đất
+    cccd_seller = "079011111111"
+    tx = land_registry.register_land("Quan 1", 100, cccd_seller, "pdf", "img", sender=seller)
+    land_id_1 = 1
     
-    # Kiểm tra kết quả
-    assert land_registry.get_land_status(land_id) == 1 # 1 = Approved
-    assert land_nft.ownerOf(land_id) == seller.address # Seller phải sở hữu NFT
-    print(f"-> Đất #{land_id} đã được duyệt.")
-    print(f"-> NFT #{land_id} đã nằm trong ví của Seller: {seller.address}")
-
-    # 5. KỊCH BẢN: SELLER ĐĂNG BÁN (LISTING)
-    print("\n--- Kịch bản 3: Seller đăng bán trên Marketplace ---")
-    price = convert("10 ether", int) # Giá bán 10 ETH
-
-    # Bước 1: Cấp quyền (Approval)
-    # Seller cho phép Marketplace chuyển NFT của mình
+    # A2. Admin duyệt đất
+    land_registry.approve_land(land_id_1, "meta_uri", sender=admin)
+    assert land_nft.ownerOf(land_id_1) == seller.address
+    
+    # A3. Seller đăng bán (10 ETH)
+    price = convert("10 ether", int)
     land_nft.setApprovalForAll(marketplace.address, True, sender=seller)
-    print("-> Seller đã cấp quyền (Approve) cho Marketplace")
-
-    # Bước 2: Tạo Listing
-    # Gửi kèm phí listing (msg.value)
-    marketplace.create_listing(
-        land_id,
-        land_registry.get_land(land_id).owner_cccd,
-        price, 
-        sender=seller, 
-        value=listing_fee
-    )
-    listing_id = 1
-    print(f"-> Listing #{listing_id} đã được tạo với giá 10 ETH")
-
-    # 6. KỊCH BẢN: BUYER MUA ĐẤT
-    print("\n--- Kịch bản 4: Buyer đặt cọc mua đất ---")
-    cccd_buyer = "079087654321"
+    marketplace.create_listing(land_id_1, cccd_seller, price, sender=seller, value=listing_fee)
+    listing_id_1 = 1
     
-    # Buyer gửi tiền (đúng bằng giá bán) vào contract
-    marketplace.initiate_transaction(
-        listing_id, 
-        cccd_buyer, 
-        sender=buyer, 
-        value=price
-    )
-    tx_id = 1
-    print(f"-> Buyer đã chuyển 10 ETH vào Marketplace. Transaction ID: {tx_id}")
+    # A4. Buyer mua
+    cccd_buyer = "079022222222"
+    marketplace.initiate_transaction(listing_id_1, cccd_buyer, sender=buyer, value=price)
+    tx_id_1 = 1
     
-    # Kiểm tra số dư ký quỹ
-    escrow = marketplace.get_escrow_balance(buyer.address)
-    assert escrow == price
-    print(f"-> Số dư ký quỹ của Buyer trong contract: {escrow} Wei")
+    # A5. Admin duyệt giao dịch
+    marketplace.approve_transaction(tx_id_1, sender=admin)
+    print("-> Admin đã duyệt giao dịch.")
 
-    # 7. KỊCH BẢN: ADMIN DUYỆT GIAO DỊCH
-    print("\n--- Kịch bản 5: Admin duyệt giao dịch ---")
+    # ------------------------------------------
+    # KIỂM TRA DỮ LIỆU SAU KHI MUA (YÊU CẦU QUAN TRỌNG)
+    # ------------------------------------------
+    print("\n--- [CHECK] Kiểm tra tính toàn vẹn dữ liệu ---")
+
+    # 1. Kiểm tra Owner NFT
+    assert land_nft.ownerOf(land_id_1) == buyer.address
+    print("[PASS] NFT Owner là Buyer.")
+
+    # 2. Kiểm tra Registry: LandParcel.owner_cccd
+    parcel = land_registry.get_land(land_id_1)
+    # parcel struct: (id, address, area, cccd, status, pdf, img)
+    # Tùy version ape, truy cập bằng tên thuộc tính
+    print(f"Current Parcel CCCD: {parcel.owner_cccd}")
+    assert parcel.owner_cccd == cccd_buyer
+    print("[PASS] LandParcel trong Registry đã cập nhật CCCD của Buyer.")
+
+    # 3. Kiểm tra Registry: Land Owner Mapping
+    reg_owner = land_registry.get_land_owner(land_id_1)
+    assert reg_owner == buyer.address
+    print("[PASS] LandRegistry ghi nhận Owner là Buyer.")
+
+    # 4. Kiểm tra Registry: Danh sách đất của Buyer
+    buyer_lands = land_registry.get_lands_by_owner(buyer.address)
+    assert land_id_1 in buyer_lands
+    print("[PASS] Đất đã nằm trong danh sách sở hữu của Buyer.")
+
+    # 5. Kiểm tra Registry: Danh sách đất của Seller (phải mất đi)
+    seller_lands = land_registry.get_lands_by_owner(seller.address)
+    assert land_id_1 not in seller_lands
+    print("[PASS] Đất đã bị xóa khỏi danh sách của Seller.")
+
+
+    # ==========================================
+    # SCENARIO B: NGƯỜI MUA HỦY (CANCEL & PENALTY)
+    # ==========================================
+    print("\n=== SCENARIO B: NGƯỜI MUA HỦY GIAO DỊCH ===")
     
-    # Admin duyệt giao dịch #1
-    marketplace.approve_transaction(tx_id, sender=admin)
+    # B1. Seller đăng ký lô đất thứ 2
+    land_registry.register_land("Quan 2", 200, cccd_seller, "pdf2", "img2", sender=seller)
+    land_id_2 = 2
+    land_registry.approve_land(land_id_2, "meta2", sender=admin)
     
-    # 8. KIỂM TRA KẾT QUẢ CUỐI CÙNG
-    print("\n--- Kết quả cuối cùng ---")
+    # B2. Đăng bán
+    marketplace.create_listing(land_id_2, cccd_seller, price, sender=seller, value=listing_fee)
+    listing_id_2 = 2
     
-    # 1. Chủ sở hữu mới của NFT phải là Buyer
-    new_owner = land_nft.ownerOf(land_id)
-    print(f"Chủ sở hữu NFT #{land_id}: {new_owner}")
-    assert new_owner == buyer.address
-    print("-> CHECK: NFT đã chuyển sang Buyer thành công!")
-
-    # 2. CCCD trong NFT phải được cập nhật thành của Buyer
-    land_data = land_nft.get_land_data(land_id)
-    # land_data là một tuple/struct, truy cập index hoặc attribute tùy version ape
-    # Giả sử struct LandData(token_id, owner_cccd)
-    print(f"CCCD lưu trong NFT: {land_data.owner_cccd}") 
-    assert land_data.owner_cccd == cccd_buyer
-    print("-> CHECK: CCCD đã cập nhật thành công!")
-
-    # 3. Trạng thái Listing phải là Completed (2)
-    listing = marketplace.get_listing(listing_id)
-    assert listing.status == 2
-    print("-> CHECK: Listing status là Completed!")
-
-    print("\n=== TEST HOÀN TẤT THÀNH CÔNG ===")
+    # B3. Buyer đặt cọc
+    initial_balance = buyer.balance
+    marketplace.initiate_transaction(listing_id_2, cccd_buyer, sender=buyer, value=price)
+    tx_id_2 = 2
+    print(f"-> Buyer đã cọc {price} Wei.")
+    
+    # B4. Buyer Hủy
+    print("-> Buyer tiến hành hủy...")
+    marketplace.buyer_cancel(tx_id_2, sender=buyer)
+    
+    # ------------------------------------------
+    # KIỂM TRA PHÍ PHẠT
+    # ------------------------------------------
+    # Số dư trong escrow phải về 0
+    assert marketplace.get_escrow_balance(buyer.address) == 0
+    
+    # Trạng thái listing quay về Active (0)
+    listing_2 = marketplace.get_listing(listing_id_2)
+    assert listing_2.status == 0
+    
+    # Kiểm tra số dư ví Buyer (đã bị trừ phí phạt + gas)
+    # Rất khó check chính xác số dư ví vì tốn gas fee thực thi lệnh cancel
+    # Nhưng ta có thể check logic trong contract: Collected Fees của Admin tăng lên
+    fees = marketplace.collected_fees()
+    # Fees = listing_fee (lần 1) + listing_fee (lần 2) + cancel_penalty
+    expected_fees = listing_fee * 2 + cancel_penalty
+    print(f"Tổng phí Admin thu được: {fees}")
+    assert fees == expected_fees
+    print("[PASS] Admin đã thu được phí phạt từ Buyer.")
+    
+    print("\n=== TẤT CẢ TESTCASE ĐỀU THÀNH CÔNG ===")
