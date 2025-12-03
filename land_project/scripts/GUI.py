@@ -19,7 +19,7 @@ from app_modules.crypto_utils import encrypt_data, decrypt_data, save_land_info,
 from dataclasses import dataclass
 
 USE_MOCK_DATA = False
-NODE_URL = "http://127.0.0.1:8545"
+NODE_URL = "http://192.168.0.140:8545"
 
 LAND_NFT_ADDRESS = "0x437AAc235f0Ed378AB9CbD5b7C20B1c3B28b573a"       # Ví dụ: 0x5FbDB2315678...
 LAND_REGISTRY_ADDRESS = "0x9FfDa9D1FeDdF35a26D2F68a50Fd600e68696469"  # Ví dụ: 0xe7f1725E7734...
