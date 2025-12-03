@@ -19,7 +19,7 @@ from app_modules.crypto_utils import encrypt_data, decrypt_data, save_land_info,
 from dataclasses import dataclass
 
 USE_MOCK_DATA = False
-NODE_URL = "http://192.168.0.140:8545"
+NODE_URL = "http://127.0.0.1:8545"
 
 LAND_NFT_ADDRESS = "0x437AAc235f0Ed378AB9CbD5b7C20B1c3B28b573a"       # Ví dụ: 0x5FbDB2315678...
 LAND_REGISTRY_ADDRESS = "0x9FfDa9D1FeDdF35a26D2F68a50Fd600e68696469"  # Ví dụ: 0xe7f1725E7734...
@@ -451,7 +451,7 @@ class MarketplaceTab(QWidget):
         title_label = QLabel("Thị trường Bất động sản")
         title_label.setStyleSheet("font-size: 18px; font-weight: bold; color: #2c3e50;")
         
-        self.refresh_button = QPushButton("🔄 Làm mới")
+        self.refresh_button = QPushButton("Làm mới")
         self.refresh_button.setFixedWidth(120)
         self.refresh_button.setStyleSheet("padding: 5px; font-weight: bold;")
         self.refresh_button.clicked.connect(self.load_listings)
@@ -517,7 +517,7 @@ class MarketplaceTab(QWidget):
             QMessageBox.critical(self, "Lỗi", f"Không thể tải danh sách niêm yết: {e}")
         
         self.refresh_button.setEnabled(True)
-        self.refresh_button.setText("🔄 Làm mới")
+        self.refresh_button.setText("Làm mới")
 
     @Slot(int, str)
     def handle_view_details(self, listing_id, seller_address):
@@ -826,12 +826,22 @@ class RegisterLandTab(QWidget):
         history_group = QGroupBox("Lịch sử Đăng ký của Bạn")
         history_layout = QVBoxLayout(history_group)
 
+        tools_layout = QHBoxLayout()
+        tools_layout.addStretch() 
+        
+        self.refresh_btn = QPushButton("Làm mới")
+        self.refresh_btn.setToolTip("Nhấn để kiểm tra xem Admin đã duyệt hồ sơ chưa")
+        self.refresh_btn.clicked.connect(self.populate_history)
+        
+        tools_layout.addWidget(self.refresh_btn)
+        history_layout.addLayout(tools_layout)
+
         self.history_table = QTableWidget()
         self.history_table.setColumnCount(4)
         self.history_table.setHorizontalHeaderLabels(["ID", "Địa chỉ", "Ngày đăng ký", "Trạng thái"])
         self.history_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.history_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.history_table.setMinimumHeight(150) 
+        self.history_table.setMinimumHeight(200) 
         
         history_layout.addWidget(self.history_table)
         layout.addWidget(history_group)
@@ -869,7 +879,11 @@ class RegisterLandTab(QWidget):
 
     def handle_register(self):
         land_address = self.land_address_input.text()
-        area = int(self.area_input.text())
+        try:
+            area = int(self.area_input.text())
+        except ValueError:
+            QMessageBox.warning(self, "Lỗi", "Diện tích phải là số.")
+            return
         cccd_raw = self.cccd_input.text()
         pdf_uri = self.pdf_uri_input.text()
         image_uri = self.image_uri_input.text()
@@ -892,10 +906,22 @@ class RegisterLandTab(QWidget):
             QMessageBox.critical(self, "Lỗi", f"Gửi hồ sơ thất bại: {e}")
     
     def populate_history(self):
+        if hasattr(self, 'refresh_btn'):
+            self.refresh_btn.setText("Đang tải...")
+            self.refresh_btn.setEnabled(False)
+            QApplication.processEvents()
+
         self.history_table.setRowCount(0)
         try:
-            my_land_ids = self.land_registry_contract.get_lands_by_owner(self.user_account)
+            # GỌI HÀM GETTER ĐÃ SỬA
+            my_land_ids = self.land_registry_contract.get_lands_by_owner(self.user_account.address)
             
+            # Đảo ngược danh sách để cái mới nhất lên đầu
+            # Ape trả về tuple/list nên có thể reverse được
+            if isinstance(my_land_ids, (list, tuple)):
+                my_land_ids = list(my_land_ids)
+                my_land_ids.reverse()
+
             self.history_table.setRowCount(len(my_land_ids))
             
             for row, land_id in enumerate(my_land_ids):
@@ -923,6 +949,11 @@ class RegisterLandTab(QWidget):
 
         except Exception as e:
             print(f"Lỗi tải lịch sử: {e}")
+        
+        # Reset lại nút bấm
+        if hasattr(self, 'refresh_btn'):
+            self.refresh_btn.setText("Làm mới")
+            self.refresh_btn.setEnabled(True)
 
 # =============================================================================
 # ADMIN TABS
@@ -1350,7 +1381,7 @@ class MainWindow(QMainWindow):
     def connect_blockchain(self):
         """Thiết lập kết nối Provider và khởi tạo Contract Objects"""
         if USE_MOCK_DATA:
-            print("⚠️ Đang chạy chế độ MOCK DATA.")
+            print("Đang chạy chế độ MOCK DATA.")
             self.mock_registry = MockLandRegistry()
             self.mock_nft = MockLandNFT(self.mock_registry)
             self.mock_marketplace = MockMarketplace(MOCK_ADMIN_ADDRESS, self.mock_nft)
@@ -1360,23 +1391,23 @@ class MainWindow(QMainWindow):
             self.land_nft_contract = self.mock_nft
             self.marketplace_contract = self.mock_marketplace
         else:
-            print(f"🔌 Đang kết nối tới Geth tại {NODE_URL}...")
+            print(f"Đang kết nối tới Geth tại {NODE_URL}...")
             try:
                 # Kết nối Provider
                 self.provider_context = networks.ethereum.local.use_provider(NODE_URL)
                 self.active_provider = self.provider_context.__enter__()
-                print(f"✅ Kết nối thành công! Chain ID: {networks.active_provider.chain_id}")
+                print(f"Kết nối thành công! Chain ID: {networks.active_provider.chain_id}")
 
                 # Load Contracts bằng Ape Project
                 # Lưu ý: Cần file JSON artifact (được tạo ra khi compile)
                 # project.ContractName.at(address) tự động tìm ABI
                 
-                print("⏳ Đang tải Contracts...")
+                print("Đang tải Contracts...")
                 self.land_nft_contract = project.LandNFT.at(LAND_NFT_ADDRESS)
                 self.land_registry_contract = project.LandRegistry.at(LAND_REGISTRY_ADDRESS)
                 self.marketplace_contract = project.Marketplace.at(MARKETPLACE_ADDRESS)
                 
-                print("✅ Đã tải xong 3 Contracts.")
+                print("Đã tải xong 3 Contracts.")
 
             except Exception as e:
                 error_msg = f"Lỗi kết nối Blockchain:\n{e}\n\nHãy đảm bảo Geth đang chạy và bạn đang ở đúng thư mục dự án Ape."
@@ -1389,18 +1420,16 @@ class MainWindow(QMainWindow):
         self.central_widget.setCurrentWidget(self.login_page)
 
     def show_admin_ui(self, admin_account):
-        # Tạo lại Dashboard để làm mới dữ liệu
         container = self.admin_dashboard_page
         if container.layout():
-            QWidget().setLayout(container.layout()) # Hack để xóa layout cũ
+            QWidget().setLayout(container.layout()) 
             
         tabs = QTabWidget()
         
-        # Truyền Contract thật (đã khởi tạo ở __init__) vào các Tab
         self.land_registry_tab = LandRegistryTab(admin_account, self.land_registry_contract)
         self.admin_transaction_tab = AdminTransactionTab(admin_account, self.marketplace_contract, self.land_nft_contract, self.land_registry_contract)
         self.config_tab = SystemConfigTab(admin_account, self.marketplace_contract)
-        self.settings_tab = SettingsTab(admin_account, self) # Đã update
+        self.settings_tab = SettingsTab(admin_account, self) 
         
         tabs.addTab(self.land_registry_tab, "Land Registry")
         tabs.addTab(self.admin_transaction_tab, "Transactions")
