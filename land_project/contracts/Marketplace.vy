@@ -45,6 +45,7 @@ struct Listing:
     listing_id: uint256
     token_id: uint256
     seller_cccd: String[512]
+    seller: address
     price: uint256
     status: uint8  # 0: Active, 1: InTransaction, 2: Completed
     created_at: uint256
@@ -84,7 +85,6 @@ def create_listing(_token_id: uint256, _seller_cccd: String[512], _price: uint25
     nft_owner: address = staticcall ILandNFT(self.land_nft).ownerOf(_token_id)
     assert nft_owner != empty(address), "Token does not exist"
     assert nft_owner == msg.sender, "Not NFT owner"
-
     # BO SUNG QUAN TRONG: Kiem tra uy quyen (Approval)
     # Kiem tra uy quyen toan bo (setApprovalForAll)
     is_approved_all: bool = staticcall ILandNFT(self.land_nft).isApprovedForAll(msg.sender, self)
@@ -101,6 +101,7 @@ def create_listing(_token_id: uint256, _seller_cccd: String[512], _price: uint25
         listing_id=listing_id,
         token_id=_token_id,
         seller_cccd=_seller_cccd,
+        seller=msg.sender,
         price=_price,
         status=0,  # Active
         created_at=block.timestamp

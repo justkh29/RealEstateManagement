@@ -6,7 +6,7 @@ import io
 app = Flask(__name__)
 
 # CẤU HÌNH IP
-IPFS_HOST = "192.168.0.160"
+IPFS_HOST = "192.168.0.140"
 IPFS_API_PORT = "5001"
 IPFS_API_URL = f"http://{IPFS_HOST}:{IPFS_API_PORT}/api/v0"
 

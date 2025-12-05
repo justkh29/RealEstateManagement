@@ -1,5 +1,6 @@
 import requests
 import sys
+import datetime
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QTabWidget, QVBoxLayout, QPushButton,
     QLineEdit, QLabel, QFormLayout, QTableWidget, QTableWidgetItem, QScrollArea,
@@ -9,17 +10,13 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import QObject, QThread, Qt, Signal, QRegularExpression, QUrl, Slot
 from PySide6.QtGui import QFont, QRegularExpressionValidator, QDesktopServices, QPixmap
 from ape import accounts, project, networks
-from app_modules.mock_blockchain import (
-    MockAccount, MockLandRegistry, MockLandNFT, MockMarketplace,
-    MOCK_ADMIN_ADDRESS, MOCK_USER_A_ADDRESS, MOCK_USER_B_ADDRESS
-)
 from app_modules.ipfs_utils import upload_file_to_ipfs, upload_json_to_ipfs, FLASK_BACKEND_URL, IPFS_URL_VIEWER
 from app_modules.crypto_utils import encrypt_data, decrypt_data, save_land_info, get_real_cccd
 
 from dataclasses import dataclass
 
 USE_MOCK_DATA = False
-NODE_URL = "http://127.0.0.1:8545"
+NODE_URL = "http://192.168.0.140:8545"
 
 LAND_NFT_ADDRESS = "0x437AAc235f0Ed378AB9CbD5b7C20B1c3B28b573a"       # Ví dụ: 0x5FbDB2315678...
 LAND_REGISTRY_ADDRESS = "0x9FfDa9D1FeDdF35a26D2F68a50Fd600e68696469"  # Ví dụ: 0xe7f1725E7734...
@@ -43,6 +40,7 @@ class ListingData:
     listing_id: int
     token_id: int
     seller_cccd: str
+    seller_address: str
     price: int
     status: int
     created_at: int
@@ -78,9 +76,9 @@ def parse_listing_tuple(data_obj) -> ListingData:
 
     data_tuple = tuple(data_obj) 
 
-    if len(data_tuple) != 6:
+    if len(data_tuple) != 7:
         print(f"Warning: Invalid Listing data length: {data_tuple}")
-        return ListingData(listing_id=0, token_id=0, seller_cccd="", price=0, status=99, created_at=0)
+        return ListingData(listing_id=0, token_id=0, seller_cccd="", seller_address="", price=0, status=99, created_at=0)
     return ListingData(*data_tuple)
 
 def parse_transaction_tuple(data_obj) -> TransactionData:
@@ -164,20 +162,8 @@ class LandListItemWidget(QWidget):
         main_layout.addLayout(button_layout)
 
     def show_details(self):
-        real_cccd = get_real_cccd(self.land_data.land_address)
-        if real_cccd is None:
-            display_cccd = f"{self.land_data.owner_cccd[:15]}... [Đã mã hóa]"
-        else:
-            display_cccd = f"{real_cccd} (Đã xác minh cục bộ)"
-        detail_text = (
-            f"Thông tin chi tiết Thửa Đất #{self.land_data.id}\n\n"
-            f"Chủ sở hữu (CCCD): {display_cccd}\n"
-            f"Địa chỉ: {self.land_data.land_address}\n"
-            f"Diện tích: {self.land_data.area} m²\n"
-            f"Link PDF: {self.land_data.pdf_uri}\n"
-            f"Link Hình ảnh: {self.land_data.image_uri}"
-        )
-        QMessageBox.information(self, f"Chi tiết Đất #{self.land_data.id}", detail_text)
+        dialog = MyLandDetailDialog(self.land_data, self)
+        dialog.exec()
 
 class ListingCardWidget(QFrame):
     view_details_requested = Signal(int, str)
@@ -235,6 +221,53 @@ class ListingCardWidget(QFrame):
 # =============================================================================
 # DIALOGS
 # =============================================================================
+class MyLandDetailDialog(QDialog):
+    def __init__(self, land_data: LandParcelData, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Chi tiết Thửa Đất #{land_data.id}")
+        self.setMinimumWidth(500)
+        
+        layout = QVBoxLayout(self)
+        form_layout = QFormLayout()
+
+        real_cccd = get_real_cccd(land_data.land_address)
+        if real_cccd is None:
+            display_cccd = f"{land_data.owner_cccd[:10]}...*** (Chưa xác minh)"
+        else:
+            display_cccd = f"{real_cccd} (Đã xác minh cục bộ)"
+
+        def create_selectable_label(text):
+            lbl = QLabel(text)
+            lbl.setTextInteractionFlags(Qt.TextSelectableByMouse) 
+            return lbl
+
+        form_layout.addRow("<b>Mã Thửa Đất:</b>", create_selectable_label(str(land_data.id)))
+        form_layout.addRow("<b>Chủ sở hữu (CCCD):</b>", create_selectable_label(display_cccd))
+        form_layout.addRow("<b>Địa chỉ:</b>", create_selectable_label(land_data.land_address))
+        form_layout.addRow("<b>Diện tích:</b>", create_selectable_label(f"{land_data.area} m²"))
+
+
+        pdf_url = land_data.pdf_uri.replace("ipfs://", IPFS_URL_VIEWER)
+        pdf_link_html = f'<a href="{pdf_url}">Mở tài liệu PDF ({land_data.pdf_uri})</a>'
+        
+        pdf_label = QLabel(pdf_link_html)
+        pdf_label.setOpenExternalLinks(True) 
+        pdf_label.setTextInteractionFlags(Qt.TextBrowserInteraction) 
+        form_layout.addRow("<b>Tài liệu pháp lý:</b>", pdf_label)
+
+        img_url = land_data.image_uri.replace("ipfs://", IPFS_URL_VIEWER)
+        img_link_html = f'<a href="{img_url}">Xem hình ảnh thực tế ({land_data.image_uri})</a>'
+        
+        img_label = QLabel(img_link_html)
+        img_label.setOpenExternalLinks(True)
+        img_label.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        form_layout.addRow("<b>Hình ảnh:</b>", img_label)
+
+        layout.addLayout(form_layout)
+
+        close_btn = QPushButton("Đóng")
+        close_btn.clicked.connect(self.accept)
+        layout.addWidget(close_btn, alignment=Qt.AlignRight)
 
 class ListingDetailDialog(QDialog):
     def __init__(self, user_account, listing_id, listing_data, land_data, seller_address, marketplace_contract, parent=None):
@@ -250,10 +283,14 @@ class ListingDetailDialog(QDialog):
         form_layout = QFormLayout()
 
         price_in_eth = listing_data.price / 10**18
-        
+        created_date_str = datetime.datetime.fromtimestamp(listing_data.created_at).strftime('%Y-%m-%d %H:%M')
+        price_label = QLabel(f"{price_in_eth:.4f} ETH ({listing_data.price} Wei)")
+        price_label.setStyleSheet("color: #d32f2f; font-weight: bold; font-size: 14px;")
+
+        form_layout.addRow("<b>Ngày đăng bán:</b>", QLabel(created_date_str))
         form_layout.addRow("<b>Địa chỉ:</b>", QLabel(land_data.land_address))
         form_layout.addRow("<b>Diện tích:</b>", QLabel(f"{land_data.area} m²"))
-        form_layout.addRow("<b>Giá bán:</b>", QLabel(f"{price_in_eth:.4f} ETH ({listing_data.price} Wei)"))
+        form_layout.addRow("<b>Giá bán:</b>", price_label)
         
         seller_label = QLabel(seller_address)
         seller_label.setWordWrap(True)
@@ -549,7 +586,7 @@ class MyTransactionsTab(QWidget):
         layout = QVBoxLayout(self)
 
         header_layout = QHBoxLayout()
-        title = QLabel("Lịch sử Giao dịch & Đơn mua")
+        title = QLabel("Lịch sử & Trạng thái Giao dịch")
         title.setStyleSheet("font-size: 18px; font-weight: bold;")
         
         self.refresh_button = QPushButton("Làm mới")
@@ -561,11 +598,16 @@ class MyTransactionsTab(QWidget):
         layout.addLayout(header_layout)
 
         self.table = QTableWidget()
-        self.table.setColumnCount(6)
+        self.table.verticalHeader().setVisible(False) 
+        
+        self.table.setColumnCount(7)
         self.table.setHorizontalHeaderLabels([
-            "ID GD", "Địa chỉ Đất", "Giá (ETH)", "Trạng thái", "Ngày tạo", "Hành động"
+            "ID GD", "ID Đất", "Vai trò", "Giá (ETH)", "Trạng thái", "Ngày tạo", "Hành động"
         ])
+        
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         layout.addWidget(self.table)
 
@@ -574,66 +616,95 @@ class MyTransactionsTab(QWidget):
     def populate_transactions(self):
         self.table.setRowCount(0)
         try:
+            # Nhớ thêm () cho contract thật
             next_tx_id = self.marketplace_contract.next_tx_id()
             
+            # Duyệt ngược để thấy mới nhất trước
             for i in range(next_tx_id - 1, 0, -1):
                 tx_tuple = self.marketplace_contract.transactions(i)
                 tx_data = parse_transaction_tuple(tx_tuple)
                 
-                if tx_data and tx_data.buyer_address.lower() == self.user_account.address.lower():
-                    self.add_transaction_row(tx_data)
+                if not tx_data: continue
+
+                listing_tuple = self.marketplace_contract.listings(tx_data.listing_id)
+                listing_data = parse_listing_tuple(listing_tuple)
+                
+                my_address = self.user_account.address.lower()
+                buyer_address = tx_data.buyer_address.lower()
+                seller_address = listing_data.seller_address.lower()
+
+                is_my_transaction = False
+                role = ""
+
+                if buyer_address == my_address:
+                    is_my_transaction = True
+                    role = "Người Mua"
+                
+                elif seller_address == my_address:
+                    is_my_transaction = True
+                    role = "Người Bán"
+
+                if is_my_transaction:
+                    self.add_transaction_row(tx_data, listing_data, role)
                     
         except Exception as e:
             print(f"Lỗi tải giao dịch: {e}")
 
-    def add_transaction_row(self, tx_data: TransactionData):
+    def add_transaction_row(self, tx_data: TransactionData, listing_data: ListingData, role: str):
         row = self.table.rowCount()
         self.table.insertRow(row)
 
-        land_address_display = "Đang tải..."
+        # 1. Lấy địa chỉ đất hiển thị
+        land_address_display = f"Listing #{tx_data.listing_id}"
         try:
-            listing_tuple = self.marketplace_contract.listings(tx_data.listing_id)
-            listing_data = parse_listing_tuple(listing_tuple)
-            if listing_data:
-                land_tuple = self.land_registry_contract.land_parcels(listing_data.token_id)
-                land_data = parse_land_parcel_tuple(land_tuple)
-                if land_data:
-                    land_address_display = f"#{listing_data.token_id} - {land_data.land_address}"
+            land_tuple = self.land_registry_contract.land_parcels(listing_data.token_id)
+            land_data = parse_land_parcel_tuple(land_tuple)
+            if land_data.id != 0:
+                land_address_display = f"#{listing_data.token_id} - {land_data.land_address}"
         except:
-            land_address_display = f"Listing #{tx_data.listing_id}"
+            pass
 
-        status_text = {
-            0: "Đang chờ duyệt",
-            1: "Thành công",
-            2: "Bị từ chối",
-            3: "Đã hủy"
-        }.get(tx_data.status, "Không rõ")
+        status_map = {
+            0: ("Đang chờ duyệt", Qt.blue),
+            1: ("Thành công", Qt.green),
+            2: ("Bị từ chối", Qt.red),
+            3: ("Đã hủy", Qt.red)
+        }
+        status_text, color = status_map.get(tx_data.status, ("Không rõ", Qt.black))
         
         status_item = QTableWidgetItem(status_text)
-        if tx_data.status == 0:
-            status_item.setForeground(Qt.blue)
-            status_item.setFont(QFont("Arial", 9, QFont.Bold))
-        elif tx_data.status == 1:
-            status_item.setForeground(Qt.green)
-        elif tx_data.status == 2 or tx_data.status == 3:
-            status_item.setForeground(Qt.red)
+        status_item.setForeground(color)
+        status_item.setFont(QFont("Arial", 9, QFont.Bold))
+
+        role_item = QTableWidgetItem(role)
+        if role == "Người Mua":
+            role_item.setForeground(Qt.darkCyan)
+        else:
+            role_item.setForeground(Qt.darkMagenta) 
+        role_item.setFont(QFont("Arial", 9, QFont.Bold))
 
         self.table.setItem(row, 0, QTableWidgetItem(str(tx_data.tx_id)))
         self.table.setItem(row, 1, QTableWidgetItem(land_address_display))
-        self.table.setItem(row, 2, QTableWidgetItem(f"{tx_data.amount / 10**18:.4f}"))
-        self.table.setItem(row, 3, status_item)
+        self.table.setItem(row, 2, role_item) # Cột Vai trò
+        self.table.setItem(row, 3, QTableWidgetItem(f"{tx_data.amount / 10**18:.4f}"))
+        self.table.setItem(row, 4, status_item)
         
-        import datetime
         date_str = datetime.datetime.fromtimestamp(tx_data.created_at).strftime('%Y-%m-%d %H:%M')
-        self.table.setItem(row, 4, QTableWidgetItem(date_str))
+        self.table.setItem(row, 5, QTableWidgetItem(date_str))
 
         if tx_data.status == 0:
-            cancel_btn = QPushButton("Hủy Giao dịch")
-            cancel_btn.setStyleSheet("background-color: #ff9800; color: white; font-weight: bold;")
-            cancel_btn.clicked.connect(lambda: self.handle_cancel(tx_data.tx_id))
-            self.table.setCellWidget(row, 5, cancel_btn)
+            if role == "Người Mua":
+                cancel_btn = QPushButton("Hủy Giao dịch")
+                cancel_btn.setStyleSheet("background-color: #ff9800; color: white; font-weight: bold;")
+                cancel_btn.clicked.connect(lambda: self.handle_cancel(tx_data.tx_id))
+                self.table.setCellWidget(row, 6, cancel_btn)
+            else:
+                info_label = QLabel("Chờ người mua/Admin")
+                info_label.setAlignment(Qt.AlignCenter)
+                info_label.setStyleSheet("color: gray; font-style: italic;")
+                self.table.setCellWidget(row, 6, info_label)
         else:
-            self.table.setItem(row, 5, QTableWidgetItem("-"))
+            self.table.setItem(row, 6, QTableWidgetItem("-"))
 
     def handle_cancel(self, tx_id):
         reply = QMessageBox.question(
@@ -646,7 +717,7 @@ class MyTransactionsTab(QWidget):
         if reply == QMessageBox.Yes:
             try:
                 receipt = self.marketplace_contract.buyer_cancel(tx_id, sender=self.user_account)
-                QMessageBox.information(self, "Đã hủy", f"Giao dịch #{tx_id} đã được hủy thành công.\nTiền cọc (sau khi trừ phí) đã được hoàn lại.")
+                QMessageBox.information(self, "Đã hủy", f"Giao dịch #{tx_id} đã được hủy thành công.\nTiền cọc đã hoàn lại.")
                 self.populate_transactions()
             except Exception as e:
                 QMessageBox.critical(self, "Lỗi", f"Không thể hủy giao dịch: {e}")
@@ -684,14 +755,14 @@ class MyLandTab(QWidget):
             for i in range(1, next_listing_id):
                 l_tuple = self.marketplace_contract.listings(i)
                 l_data = parse_listing_tuple(l_tuple)
-                if l_data and l_data.status == 0: 
+                if l_data and (l_data.status == 1 or l_data.status == 0): 
                     active_listing_tokens.add(l_data.token_id)
 
             for land_id in owned_land_ids:
                 land_tuple = self.land_registry_contract.land_parcels(land_id)
                 land_data = parse_land_parcel_tuple(land_tuple)
                 
-                if land_data and land_data.status == 1:
+                if land_data and (land_data.status == 1 or land_data.status == 0):
                     is_selling = land_id in active_listing_tokens
                     item_widget = LandListItemWidget(land_data, is_selling)
                     item_widget.sell_requested.connect(self.handle_sell_request)
@@ -838,11 +909,13 @@ class RegisterLandTab(QWidget):
 
         self.history_table = QTableWidget()
         self.history_table.setColumnCount(4)
-        self.history_table.setHorizontalHeaderLabels(["ID", "Địa chỉ", "Ngày đăng ký", "Trạng thái"])
+        self.history_table.setHorizontalHeaderLabels(["ID", "Địa chỉ", "Diện tích (m²)", "Trạng thái"])
         self.history_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.history_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.history_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.history_table.setMinimumHeight(200) 
-        
+        self.history_table.verticalHeader().setVisible(False)
+
         history_layout.addWidget(self.history_table)
         layout.addWidget(history_group)
 
@@ -913,11 +986,8 @@ class RegisterLandTab(QWidget):
 
         self.history_table.setRowCount(0)
         try:
-            # GỌI HÀM GETTER ĐÃ SỬA
             my_land_ids = self.land_registry_contract.get_lands_by_owner(self.user_account.address)
             
-            # Đảo ngược danh sách để cái mới nhất lên đầu
-            # Ape trả về tuple/list nên có thể reverse được
             if isinstance(my_land_ids, (list, tuple)):
                 my_land_ids = list(my_land_ids)
                 my_land_ids.reverse()
@@ -931,8 +1001,11 @@ class RegisterLandTab(QWidget):
                 if land_data:
                     self.history_table.setItem(row, 0, QTableWidgetItem(str(land_data.id)))
                     self.history_table.setItem(row, 1, QTableWidgetItem(land_data.land_address))
-                    self.history_table.setItem(row, 2, QTableWidgetItem("-")) 
-                    
+
+                    area_item = QTableWidgetItem(str(land_data.area))
+                    area_item.setTextAlignment(Qt.AlignCenter)
+                    self.history_table.setItem(row, 2, area_item)
+
                     status_text = "Chờ duyệt"
                     color = Qt.blue
                     if land_data.status == 1: 
@@ -944,7 +1017,7 @@ class RegisterLandTab(QWidget):
                     
                     status_item = QTableWidgetItem(status_text)
                     status_item.setForeground(color)
-                    status_item.setFont(QFont("Arial", 8, QFont.Bold))
+                    status_item.setFont(QFont("Arial", 9, QFont.Bold))
                     self.history_table.setItem(row, 3, status_item)
 
         except Exception as e:
@@ -977,9 +1050,11 @@ class LandRegistryTab(QWidget):
         layout.addWidget(self.refresh_button, alignment=Qt.AlignRight)
 
         self.pending_lands_table = QTableWidget()
-        self.pending_lands_table.setColumnCount(5)
-        self.pending_lands_table.setHorizontalHeaderLabels(["ID", "Ví Đăng ký", "CCCD", "Địa chỉ Đất", "Hành động"])
+        self.pending_lands_table.verticalHeader().setVisible(False)
+        self.pending_lands_table.setColumnCount(6)
+        self.pending_lands_table.setHorizontalHeaderLabels(["ID", "Ví Đăng ký", "CCCD", "Địa chỉ Đất", "Trạng thái", "Hành động"])
         self.pending_lands_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.pending_lands_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.pending_lands_table.setEditTriggers(QTableWidget.NoEditTriggers) 
         layout.addWidget(self.pending_lands_table)
         
@@ -991,15 +1066,13 @@ class LandRegistryTab(QWidget):
             
             next_id = self.land_registry_contract.next_land_id()
             
-            pending_requests = []
-            for i in range(1, next_id):
-                status = self.land_registry_contract.is_land_pending(i)
-                if status:
-                    pending_requests.append(i)
+            all_lands = []
+            for i in range(next_id - 1, 0, -1):
+                all_lands.append(i)
 
-            self.pending_lands_table.setRowCount(len(pending_requests))
+            self.pending_lands_table.setRowCount(len(all_lands))
 
-            for row, land_id in enumerate(pending_requests):
+            for row, land_id in enumerate(all_lands):
                 land_tuple = self.land_registry_contract.land_parcels(land_id)
                 land_data = parse_land_parcel_tuple(land_tuple)
                 land_owner = self.land_registry_contract.get_land_owner(land_id)
@@ -1010,9 +1083,26 @@ class LandRegistryTab(QWidget):
                     self.pending_lands_table.setItem(row, 1, QTableWidgetItem(land_owner))
                     self.pending_lands_table.setItem(row, 2, QTableWidgetItem(cccd))
                     self.pending_lands_table.setItem(row, 3, QTableWidgetItem(land_data.land_address))
-                process_button = QPushButton("Xem & Xử lý")
-                process_button.clicked.connect(lambda checked, lid=land_id: self.show_detail_dialog(lid))
-                self.pending_lands_table.setCellWidget(row, 4, process_button)
+                    
+                    status_text = "Chờ duyệt"
+                    color = Qt.blue
+                    if land_data.status == 1:
+                        status_text = "Đã duyệt"
+                        color = Qt.green
+                    elif land_data.status == 2:
+                        status_text = "Đã từ chối"
+                        color = Qt.red
+                    if land_data.status == 0:
+                        process_button = QPushButton("Xem & Xử lý")
+                        process_button.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
+                        process_button.clicked.connect(lambda checked, lid=land_id: self.show_detail_dialog(lid))
+                        self.pending_lands_table.setCellWidget(row, 5, process_button)
+                    else:
+                        self.pending_lands_table.setItem(row, 5, QTableWidgetItem("-"))
+                    status_item = QTableWidgetItem(status_text)
+                    status_item.setForeground(color)
+                    status_item.setFont(QFont("Arial", 9, QFont.Bold))
+                    self.pending_lands_table.setItem(row, 4, status_item)
 
         except Exception as e:
             QMessageBox.critical(self, "Lỗi Blockchain", f"Không thể tải dữ liệu từ contract: {e}")
@@ -1049,12 +1139,16 @@ class AdminTransactionTab(QWidget):
         layout.addWidget(self.refresh_button, alignment=Qt.AlignRight)
 
         self.transactions_table = QTableWidget()
-        self.transactions_table.setColumnCount(7)
+        self.transactions_table.verticalHeader().setVisible(False)
+        self.transactions_table.setColumnCount(9)
         self.transactions_table.setHorizontalHeaderLabels([
-            "ID Giao dịch", "ID Đất", "Người bán", "Người mua", 
-            "CCCD Người mua", "Giá (ETH)", "Hành động"
+            "ID GD", "ID Đất", "Người bán", "Người mua", 
+            "CCCD Người mua", "Giá (ETH)", "Ngày tạo", "Trạng thái", "Hành động"
         ])
         self.transactions_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.transactions_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.transactions_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+
         self.transactions_table.setEditTriggers(QTableWidget.NoEditTriggers)
         layout.addWidget(self.transactions_table)
         
@@ -1064,49 +1158,63 @@ class AdminTransactionTab(QWidget):
         self.transactions_table.setRowCount(0)
         try:
             next_tx_id = self.marketplace_contract.next_tx_id()
-            pending_txs = []
-            for i in range(1, next_tx_id):
+            all_txs = []
+            for i in range(next_tx_id - 1, 0, -1):
                 tx_tuple = self.marketplace_contract.transactions(i)
-                if tx_tuple and tx_tuple[5] == 0: 
-                    pending_txs.append(tx_tuple)
+                tx_data = parse_transaction_tuple(tx_tuple)
+                if tx_data:
+                    all_txs.append(tx_data)
             
-            self.transactions_table.setRowCount(len(pending_txs))
+            self.transactions_table.setRowCount(len(all_txs))
 
-            for row, tx_tuple in enumerate(pending_txs):
-                tx_id = tx_tuple[0]
-                listing_id = tx_tuple[1]
-                buyer_cccd_encrypted = tx_tuple[2]
-                buyer_address = tx_tuple[3]
-                amount_wei = tx_tuple[4]
-                
-                listing_tuple = self.marketplace_contract.listings(listing_id)
+            for row, tx_data in enumerate(all_txs):
+                listing_tuple = self.marketplace_contract.listings(tx_data.listing_id)
                 listing_data = parse_listing_tuple(listing_tuple)
+                buyer_cccd_encrypted = tx_data.buyer_cccd
+                date_str = datetime.datetime.fromtimestamp(tx_tuple.created_at).strftime('%Y-%m-%d %H:%M')
                 
                 buyer_cccd = decrypt_data(buyer_cccd_encrypted)
                 token_id = listing_data.token_id
-                seller_address = self.land_nft_contract.ownerOf(token_id)
+                seller_address = listing_data.seller_address 
                 
-                self.transactions_table.setItem(row, 0, QTableWidgetItem(str(tx_id)))
+                self.transactions_table.setItem(row, 0, QTableWidgetItem(str(tx_data.tx_id)))
                 self.transactions_table.setItem(row, 1, QTableWidgetItem(str(token_id)))
                 self.transactions_table.setItem(row, 2, QTableWidgetItem(seller_address))
-                self.transactions_table.setItem(row, 3, QTableWidgetItem(buyer_address))
+                self.transactions_table.setItem(row, 3, QTableWidgetItem(tx_data.buyer_address))
                 self.transactions_table.setItem(row, 4, QTableWidgetItem(buyer_cccd))
-                self.transactions_table.setItem(row, 5, QTableWidgetItem(f"{amount_wei / 10**18:.4f}"))
-                
-                approve_button = QPushButton("Duyệt")
-                reject_button = QPushButton("Từ chối")
-                approve_button.setStyleSheet("background-color: #4CAF50; color: white;")
-                reject_button.setStyleSheet("background-color: #f44336; color: white;")
-                
-                approve_button.clicked.connect(lambda checked, tid=tx_id: self.handle_approve(tid))
-                reject_button.clicked.connect(lambda checked, tid=tx_id: self.handle_reject(tid))
+                self.transactions_table.setItem(row, 5, QTableWidgetItem(f"{tx_data.amount / 10**18:.4f}"))
+                self.transactions_table.setItem(row, 6, QTableWidgetItem(date_str))
 
-                action_widget = QWidget()
-                action_layout = QHBoxLayout(action_widget)
-                action_layout.addWidget(approve_button)
-                action_layout.addWidget(reject_button)
-                action_layout.setContentsMargins(0, 0, 0, 0)
-                self.transactions_table.setCellWidget(row, 6, action_widget)
+                status_map = {
+                    0: ("Chờ duyệt", Qt.blue),
+                    1: ("Thành công", Qt.green),
+                    2: ("Đã từ chối", Qt.red),
+                    3: ("Người mua hủy", Qt.darkRed)
+                }
+                status_text, color = status_map.get(tx_data.status, ("Không rõ", Qt.black))
+                
+                status_item = QTableWidgetItem(status_text)
+                status_item.setForeground(color)
+                status_item.setFont(QFont("Arial", 9, QFont.Bold))
+                self.transactions_table.setItem(row, 7, status_item)
+
+                if tx_data.status == 0:
+                    approve_button = QPushButton("Duyệt")
+                    reject_button = QPushButton("Từ chối")
+                    approve_button.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
+                    reject_button.setStyleSheet("background-color: #f44336; color: white; font-weight: bold;")
+                    
+                    approve_button.clicked.connect(lambda checked, tid=tx_data.tx_id: self.handle_approve(tid))
+                    reject_button.clicked.connect(lambda checked, tid=tx_data.tx_id: self.handle_reject(tid))
+
+                    action_widget = QWidget()
+                    action_layout = QHBoxLayout(action_widget)
+                    action_layout.addWidget(approve_button)
+                    action_layout.addWidget(reject_button)
+                    action_layout.setContentsMargins(2, 2, 2, 2)
+                    self.transactions_table.setCellWidget(row, 8, action_widget)
+                else:
+                    self.transactions_table.setItem(row, 8, QTableWidgetItem("-"))
 
         except Exception as e:
             QMessageBox.critical(self, "Lỗi", f"Không thể tải danh sách giao dịch: {e}")
@@ -1269,7 +1377,6 @@ class SettingsTab(QWidget):
         if reply == QMessageBox.Yes:
             print("Logout confirmed. Calling main window's handle_logout...")
             self.main_window.handle_logout()
-
 
 # =============================================================================
 # CỬA SỔ ĐĂNG NHẬP
