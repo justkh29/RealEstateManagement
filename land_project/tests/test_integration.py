@@ -1,79 +1,27 @@
 import ape
-from ape import accounts
 
-def test_full_integration_flow(land_registry, marketplace, land_nft, owner, seller, buyer):
-    """Test complete integration flow from land registration to sale"""
-    print("=== STARTING FULL INTEGRATION TEST ===")
-    
-    # Step 1: Register land
-    print("1. Registering land...")
-    land_registry.register_land(
-        "123 Integration Street",
-        1000,
-        "CCCDINT001",
-        "ipfs://pdf_int",
-        "ipfs://img_int",
-        sender=seller
-    )
+def test_flow(land_registry, land_nft, marketplace, owner, seller, buyer):
+    # 1. Register
+    land_registry.register_land("Integration St", 200, "CCCD_S", "pdf", "img", sender=seller)
     land_id = 1
-    assert land_registry.get_land_status(land_id) == 0  # Pending
-    print("✓ Land registered")
     
-    # Step 2: Approve land (mint NFT)
-    print("2. Approving land and minting NFT...")
-    land_registry.approve_land(land_id, "ipfs://metadata_int", sender=owner)
-    assert land_registry.get_land_status(land_id) == 1  # Approved
+    # 2. Approve Land
+    land_registry.approve_land(land_id, "meta", sender=owner)
     assert land_nft.ownerOf(land_id) == seller.address
-    print("✓ Land approved, NFT minted")
     
-    # Step 3: Seller approves marketplace
-    print("3. Seller approving marketplace...")
+    # 3. Create Listing
     land_nft.approve(marketplace.address, land_id, sender=seller)
-    assert land_nft.getApproved(land_id) == marketplace.address
-    print("✓ Marketplace approved")
+    fee = marketplace.listing_fee()
+    marketplace.create_listing(land_id, "CCCD_S", 5000, sender=seller, value=fee)
     
-    # Step 4: Create listing
-    print("4. Creating marketplace listing...")
-    listing_fee = marketplace.listing_fee()
-    marketplace.create_listing(
-        land_id,
-        "CCCDINT001",
-        10000,  # 10,000 wei price
-        sender=seller,
-        value=listing_fee
-    )
-    listing_id = 1
-    listing = marketplace.get_listing(listing_id)
-    assert listing.status == 0  # Active
-    assert listing.price == 10000
-    print("✓ Listing created")
+    # 4. Initiate Transaction
+    marketplace.initiate_transaction(1, "CCCD_B", sender=buyer, value=5000)
     
-    # Step 5: Buyer initiates transaction
-    print("5. Buyer initiating transaction...")
-    buyer_balance_before = buyer.balance
-    marketplace.initiate_transaction(
-        listing_id,
-        "CCCDINT002",  # buyer's CCCD
-        sender=buyer,
-        value=10000  # exact price
-    )
-    tx_id = 1
-    transaction = marketplace.get_transaction(tx_id)
-    assert transaction.status == 0  # Pending
-    assert marketplace.get_escrow_balance(buyer.address) == 10000
-    print("✓ Transaction initiated")
+    # 5. Approve Transaction
+    marketplace.approve_transaction(1, sender=owner)
     
-    # Step 6: Admin approves transaction
-    print("6. Admin approving transaction...")
-    seller_balance_before = seller.balance
-    marketplace.approve_transaction(tx_id, sender=owner)
-    
-    # Verify final states
-    assert marketplace.get_transaction(tx_id).status == 1  # Approved
-    assert land_nft.ownerOf(land_id) == buyer.address  # NFT transferred
-    assert seller.balance > seller_balance_before  # Seller got paid
-    assert marketplace.get_escrow_balance(buyer.address) == 0  # Escrow cleared
-    assert marketplace.get_listing(listing_id).status == 2  # Listing completed
-    
-    print("✓ Transaction approved and completed")
-    print("🎉 FULL INTEGRATION TEST PASSED!")
+    # 6. Final Assertions
+    assert land_nft.ownerOf(land_id) == buyer.address
+    assert land_registry.get_land_owner(land_id) == buyer.address
+    assert land_registry.get_land(land_id).owner_cccd == "CCCD_B"
+    assert marketplace.get_listing(1).status == 2

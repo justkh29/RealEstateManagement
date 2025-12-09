@@ -1,5 +1,5 @@
 import pytest
-from ape import accounts
+import ape
 
 @pytest.fixture
 def owner(accounts):
@@ -14,28 +14,26 @@ def buyer(accounts):
     return accounts[2]
 
 @pytest.fixture
+def stranger(accounts):
+    return accounts[3]
+
+@pytest.fixture
 def land_nft(project, owner):
-    # Deploy LandNFT với owner là minter
-    nft = project.LandNFT.deploy("LandNFT", "LAND", owner.address, sender=owner)
-    print(f"LandNFT deployed at: {nft.address}")
-    return nft
+    return project.LandNFT.deploy("LandNFT", "LAND", owner.address, sender=owner)
 
 @pytest.fixture
 def land_registry(project, land_nft, owner):
-    # Deploy LandRegistry
     registry = project.LandRegistry.deploy(land_nft.address, sender=owner)
-    print(f"LandRegistry deployed at: {registry.address}")
-    
-    # Set LandRegistry làm minter cho LandNFT
     land_nft.set_minter(registry.address, sender=owner)
-    print(f"LandNFT minter set to: {registry.address}")
     
     return registry
 
 @pytest.fixture
 def marketplace(project, land_nft, owner):
-    # Deploy Marketplace với listing_fee = 1000 wei, cancel_penalty = 100 wei
-    market = project.Marketplace.deploy(land_nft.address, 1000, 100, sender=owner)
-    print(f"Marketplace deployed at: {market.address}")
-    return market
+    return project.Marketplace.deploy(land_nft.address, 1000, 100, sender=owner)
 
+@pytest.fixture
+def minted_token_id(land_registry, land_nft, owner, seller):
+    land_registry.register_land("Addr", 100, "CCCD_SELLER", "pdf", "img", sender=seller)
+    land_registry.approve_land(1, "meta_uri", sender=owner)
+    return 1
