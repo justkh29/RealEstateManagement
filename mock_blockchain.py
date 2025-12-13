@@ -1,6 +1,6 @@
 # file: mock_blockchain.py (Phiên bản "Mô phỏng chính xác" - trả về Tuples)
 import json
-
+from crypto_utils import encrypt_data, decrypt_data
 # =============================================================================
 # CÁC ĐỊA CHỈ VÍ MẪU (Không đổi)
 # =============================================================================
@@ -25,16 +25,21 @@ class MockLandRegistry:
         self.next_land_id = 8
         self.admin = MOCK_ADMIN_ADDRESS
         self.land_nft = MOCK_LAND_NFT_ADDRESS
-        
+
+        cccd_a = encrypt_data('079011111111')
+        cccd_b = encrypt_data('079022222222')
+        cccd_c = encrypt_data('079033333333')
+        cccd_d = encrypt_data('079044444444')
+
         # Lưu trữ dữ liệu dưới dạng tuple, giống hệt struct
         self._land_parcels_data = { # id, address, area, cccd, status, pdf, image
-            1: (1, '123 Đường A, Quận 1', 100, '079011111111', 0, 'ipfs://QmPDF1...', 'ipfs://QmImage1...'),
-            2: (2, '456 Đường B, Quận 3', 150, '079011111111', 1, 'ipfs://QmPDF2...', 'ipfs://QmImage2...'),
-            3: (3, '789 Đường C, Quận 5', 120, '079022222222', 0, 'ipfs://QmPDF3...', 'ipfs://QmImage3...'),
-            4: (4, '101 Đường D, Quận 7', 200, '079022222222', 1, 'ipfs://QmPDF4...', 'ipfs://QmTD1Tga9tqGJBzk16U7CN5noumnbJTHgkWvn9EpkUfAe4'),
-            5: (5, '212 Đường E, Bình Thạnh', 80, '079022222222', 2, 'ipfs://QmPDF5...', 'ipfs://QmImage5...'),
-            6: (6, '333 Đường F, TP. Thủ Đức', 180, '079033333333', 0, 'ipfs://QmPDF6...', 'ipfs://QmImage6...'), # Đang chờ
-            7: (7, '444 Đường G, Quận 12', 95, '079044444444', 0, 'ipfs://QmPDF7...', 'ipfs://QmImage7...'), # Đang chờ
+            1: (1, '123 Đường A, Quận 1', 100, cccd_a, 0, 'ipfs://QmPDF1...', 'ipfs://QmImage1...'),
+            2: (2, '456 Đường B, Quận 3', 150, cccd_a, 1, 'ipfs://QmPDF2...', 'ipfs://QmImage2...'),
+            3: (3, '789 Đường C, Quận 5', 120, cccd_b, 0, 'ipfs://QmPDF3...', 'ipfs://QmImage3...'),
+            4: (4, '101 Đường D, Quận 7', 200, cccd_b, 1, 'ipfs://QmPDF4...', 'ipfs://QmTD1Tga9tqGJBzk16U7CN5noumnbJTHgkWvn9EpkUfAe4'),
+            5: (5, '212 Đường E, Bình Thạnh', 80, cccd_b, 2, 'ipfs://QmPDF5...', 'ipfs://QmImage5...'),
+            6: (6, '333 Đường F, TP. Thủ Đức', 180, cccd_c, 0, 'ipfs://QmPDF6...', 'ipfs://QmImage6...'), 
+            7: (7, '444 Đường G, Quận 12', 95, cccd_d, 0, 'ipfs://QmPDF7...', 'ipfs://QmImage7...'), 
         }
         self._land_to_owner_data = {
             1: MOCK_USER_A_ADDRESS, 2: MOCK_USER_A_ADDRESS, 3: MOCK_USER_B_ADDRESS,
@@ -45,10 +50,10 @@ class MockLandRegistry:
             MOCK_USER_A_ADDRESS: [1, 2, 6], MOCK_USER_B_ADDRESS: [3, 4, 5, 7]
         }
         self._lands_by_cccd_data = {
-            '079011111111': [1, 2],
-            '079022222222': [3, 4, 5],
-            '079033333333': [6],
-            '079044444444': [7],
+            cccd_a: [1, 2],
+            cccd_b: [3, 4, 5],
+            cccd_c: [6],
+            cccd_d: [7],
         }
 
     # Public HashMap Getters (TRẢ VỀ TUPLE)
@@ -74,7 +79,6 @@ class MockLandRegistry:
         assert len(_owner_cccd) > 0, "Mock: Owner CCCD cannot be empty"
         assert len(_pdf_uri) > 0, "Mock: PDF URI cannot be empty"
         assert len(_image_uri) > 0, "Mock: Image URI cannot be empty"
-        assert self._land_ids_data.get(_owner_cccd) is None, f"Mock: Land already registered for this CCCD: {_owner_cccd}"
 
         # 2. Tạo bản ghi mới
         land_id = self.next_land_id
@@ -139,6 +143,53 @@ class MockLandRegistry:
         print(f"      -> Land #{land_id} status changed to Rejected.")
         return {"txn_hash": f"0xmock_reject_tx_hash_{land_id}"}
     
+    # Trong file mock_blockchain.py -> class MockLandRegistry
+
+    def update_ownership(self, token_id, new_owner, new_cccd, sender):
+        # 0. Ép kiểu token_id về int để đảm bảo nhất quán
+        token_id = int(token_id)
+        
+        print(f"[MOCK Registry] Updating ownership for land #{token_id} to {new_owner}")
+        
+        # 1. Xác định chủ cũ
+        old_owner = self._land_to_owner_data.get(token_id)
+        
+        # --- DEBUG LOG (Sẽ giúp bạn thấy ngay vấn đề) ---
+        print(f"      [DEBUG] Old owner found: {old_owner}")
+        if old_owner:
+            current_list = self._owner_to_lands_data.get(old_owner, [])
+            print(f"      [DEBUG] Old owner's list before remove: {current_list}")
+            print(f"      [DEBUG] Is {token_id} in list? {token_id in current_list}")
+        # -----------------------------------------------
+
+        # 2. Xóa khỏi danh sách chủ cũ
+        if old_owner and old_owner in self._owner_to_lands_data:
+            # Sử dụng try/except để an toàn hơn, hoặc kiểm tra in
+            if token_id in self._owner_to_lands_data[old_owner]:
+                self._owner_to_lands_data[old_owner].remove(token_id)
+                print(f"      -> Removed {token_id} from {old_owner}")
+            else:
+                print(f"      [WARNING] Token #{token_id} not found in old owner's list to remove!")
+
+        # 3. Thêm vào danh sách chủ mới
+        if new_owner not in self._owner_to_lands_data:
+            self._owner_to_lands_data[new_owner] = []
+        
+        # Kiểm tra để tránh duplicate (thêm 2 lần)
+        if token_id not in self._owner_to_lands_data[new_owner]:
+            self._owner_to_lands_data[new_owner].append(token_id)
+            print(f"      -> Added {token_id} to {new_owner}")
+
+        # 4. Cập nhật mapping land_to_owner
+        self._land_to_owner_data[token_id] = new_owner
+        
+        # 5. Cập nhật CCCD trong parcel (Tuple update)
+        if token_id in self._land_parcels_data:
+            parcel = list(self._land_parcels_data[token_id])
+            parcel[3] = new_cccd # Index 3 là owner_cccd
+            self._land_parcels_data[token_id] = tuple(parcel)
+        
+        return {"txn_hash": f"0xmock_update_owner_{token_id}"}
     # ... (các hàm mock khác nếu cần, nhưng GUI nên dùng các hàm public ở trên)
     # Hàm này vẫn có thể tồn tại để tiện lợi hơn cho GUI
 
@@ -180,12 +231,23 @@ class MockLandNFT:
         self.name = "Mock Land NFT"
         self.symbol = "MLND"
         self.minter = MOCK_LAND_REGISTRY_ADDRESS
+        self._approvals = {}
         self._operator_approvals = {}
 
     # Public HashMap Getter
     def ownerOf(self, token_id):
         # ownerOf không phải HashMap, nó là hàm view trả về address
         return self._registry._land_to_owner_data.get(token_id, "0x" + "0"*40)
+
+    def approve(self, to, token_id, sender):
+        print(f"[MOCK NFT] User {sender.address} approved {to} for token #{token_id}")
+        # Lưu trữ approval cho token cụ thể
+        self._approvals[token_id] = to
+        return {"txn_hash": f"0xmock_approve_token_{token_id}"}
+
+    def getApproved(self, token_id):
+        # Trả về địa chỉ được approve, hoặc 0x0 nếu không có
+        return self._approvals.get(token_id, "0x" + "0"*40)
 
     # Functions
     def isApprovedForAll(self, owner, operator):
@@ -198,33 +260,37 @@ class MockLandNFT:
         return {"txn_hash": "0xmock_approval_tx"}
         
     def transferWithCCCD(self, from_, to, token_id, new_cccd, sender):
-        # Mô phỏng việc thay đổi chủ sở hữu trong registry
-        self._registry._land_to_owner_data[token_id] = to
-        # Mô phỏng việc thay đổi CCCD trong registry (nếu cần)
         parcel = list(self._registry._land_parcels_data[token_id])
         parcel[3] = new_cccd
         self._registry._land_parcels_data[token_id] = tuple(parcel)
         print(f"[MOCK NFT] transferWithCCCD successful for token {token_id}")
+        self._registry.update_ownership(token_id, to, new_cccd, self) 
         return {"txn_hash": f"0xmock_transfer_{token_id}"}
 
 
 class MockMarketplace:
-    def __init__(self, admin_address):
+    def __init__(self, admin_address, nft_contract_mock=None):
         print("!!! MOCK (Tuple Mode): Marketplace instance created !!!")
         self.admin = admin_address
         self.listing_fee = 10000000000000000
         self.cancel_penalty = 50000000000000000
         self.next_listing_id = 3
         self.land_nft = MOCK_LAND_NFT_ADDRESS
+        self._nft_contract_instance = nft_contract_mock
         self.address = MOCK_MARKETPLACE_ADDRESS
         self.next_tx_id = 2
         self._transactions_data = {} # Sẽ lưu các giao dịch đang chờ
         self._escrow_balances = {} # Sẽ lưu tiền ký quỹ của người mua
 
         # Dữ liệu niêm yết mẫu dưới dạng tuple
-        self._listings_data = { # listing_id, token_id, seller_cccd, price, status, created_at
-            1: (1, 2, '079011111111', 10**18, 1, 1672531200),
-            2: (2, 4, '079022222222', int(2.5 * 10**18), 0, 1672617600),
+        # Mã hóa CCCD cho dữ liệu mẫu
+        cccd_a = encrypt_data('079011111111')
+        cccd_b = encrypt_data('079022222222')
+
+        self._listings_data = { 
+            # listing_id, token_id, seller_cccd (ENCRYPTED), price, status, created_at
+            1: (1, 2, cccd_a, 10**18, 0, 1672531200),
+            2: (2, 4, cccd_b, int(2.5 * 10**18), 0, 1672617600),
         }
 
         # tx_id, listing_id, buyer_cccd, buyer_addr, amount, status, created_at
@@ -239,7 +305,7 @@ class MockMarketplace:
     def create_listing(self, token_id, seller_cccd, price, sender, value):
         assert value >= self.listing_fee
         listing_id = self.next_listing_id
-        self._listings_data[listing_id] = (listing_id, token_id, seller_cccd, price, 0, 0)
+        self._listings_data[listing_id] = (listing_id, int(token_id), seller_cccd, price, 0, 0)
         self.next_listing_id += 1
         return {"txn_hash": f"0xmock_create_listing_{listing_id}"}
 
@@ -304,17 +370,61 @@ class MockMarketplace:
         return self._transactions_data.get(tx_id, (0, 0, "", "0x"+"0"*40, 0, 99, 0))
     
     def approve_transaction(self, tx_id, sender):
+        """
+        Duyệt giao dịch: Chuyển tiền, Chuyển NFT, Cập nhật trạng thái.
+        """
         assert sender.address == self.admin, "Mock: Not admin"
+        
+        # 1. Lấy dữ liệu Transaction
+        # Struct Transaction: tx_id, listing_id, buyer_cccd, buyer_address, amount, status, created_at
+        if tx_id not in self._transactions_data:
+             raise Exception("Transaction not found")
+             
         tx = list(self._transactions_data[tx_id])
+        
+        # Kiểm tra trạng thái (index 5 là status)
         assert tx[5] == 0, "Mock: Transaction not pending"
-        tx[5] = 1 # Approved
+        
+        listing_id = tx[1]
+        buyer_cccd = tx[2]
+        buyer_address = tx[3]
+        amount = tx[4] # Dùng để trừ escrow
+        
+        # 2. Lấy dữ liệu Listing
+        # Struct Listing: listing_id, token_id, seller_cccd, price, status, created_at
+        listing = list(self._listings_data[listing_id])
+        token_id = listing[1]
+        
+        # 3. Xác định người bán (Seller Address)
+        # Vì listing chỉ lưu CCCD, ta phải hỏi NFT contract xem ai đang giữ token này
+        if self._nft_contract_instance:
+            seller_address = self._nft_contract_instance.ownerOf(token_id)
+            
+            # 4. Thực hiện chuyển nhượng NFT (Gọi sang contract NFT)
+            print(f"[MOCK Marketplace] Calling NFT transfer: {seller_address} -> {buyer_address}")
+            self._nft_contract_instance.transferWithCCCD(
+                seller_address,  # From
+                buyer_address,   # To
+                token_id,        # Token ID
+                buyer_cccd,      # New CCCD
+                self             # Sender là Marketplace
+            )
+        else:
+            print("WARNING: NFT Contract Instance missing in MockMarketplace!")
+
+        # 5. Cập nhật tiền ký quỹ (Escrow)
+        if buyer_address in self._escrow_balances:
+            self._escrow_balances[buyer_address] -= amount
+
+        # 6. Cập nhật trạng thái Transaction -> Approved (1)
+        tx[5] = 1 
         self._transactions_data[tx_id] = tuple(tx)
         
-        listing = list(self._listings_data[tx[1]]) # tx[1] là listing_id
-        listing[4] = 2 # Completed
-        self._listings_data[tx[1]] = tuple(listing)
+        # 7. Cập nhật trạng thái Listing -> Completed (2)
+        listing[4] = 2
+        self._listings_data[listing_id] = tuple(listing)
         
-        print(f"[MOCK Marketplace] Transaction #{tx_id} approved.")
+        print(f"[MOCK Marketplace] Transaction #{tx_id} approved. NFT transferred.")
         return {"txn_hash": f"0xmock_approve_tx_{tx_id}"}
         
     def reject_transaction(self, tx_id, reason, sender):
